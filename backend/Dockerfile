@@ -1,6 +1,7 @@
 FROM python:3.13-slim
 
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
+# Pinned by tag + digest so builds are reproducible; Dependabot proposes updates.
+COPY --from=ghcr.io/astral-sh/uv:0.13.8@sha256:5cc1805e2426484abca4ad46ea783bab281fdb225fd82d8ce6d66a81254bac85 /uv /bin/uv
 WORKDIR /app
 
 # "--extra local" adds FastEmbed (local multilingual models). Build with
