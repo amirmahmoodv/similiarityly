@@ -1,5 +1,4 @@
-# Similarityly · همسان‌یاب
-
+# Similarityly
 Find duplicate and near-duplicate text across your data. Load spreadsheets,
 documents or pasted lists into **repositories**; every new record is scored
 against everything indexed before it and labelled *duplicate*, *similar* or
