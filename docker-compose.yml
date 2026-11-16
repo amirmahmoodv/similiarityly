@@ -1,0 +1,50 @@
+name: similarityly
+
+services:
+  qdrant:
+    image: qdrant/qdrant:latest
+    restart: unless-stopped
+    volumes:
+      - qdrant_data:/qdrant/storage
+    ports:
+      - "127.0.0.1:${QDRANT_PORT:-6333}:6333"
+
+  api:
+    build: ./backend
+    restart: unless-stopped
+    depends_on:
+      - qdrant
+    environment:
+      SIM_QDRANT_URL: http://qdrant:6333
+      SIM_OPENAI_BASE_URL: ${SIM_OPENAI_BASE_URL:-https://api.openai.com/v1}
+      SIM_OPENAI_API_KEY: ${SIM_OPENAI_API_KEY:-}
+      SIM_LLM_PROVIDER: ${SIM_LLM_PROVIDER:-openai}
+      SIM_LLM_BASE_URL: ${SIM_LLM_BASE_URL:-}
+      SIM_LLM_API_KEY: ${SIM_LLM_API_KEY:-}
+      SIM_LLM_MODEL: ${SIM_LLM_MODEL:-}
+      # Strongly recommended whenever the web port is reachable from other machines.
+      SIM_API_TOKEN: ${SIM_API_TOKEN:-}
+    volumes:
+      # SQLite metadata + downloaded embedding models
+      - api_data:/data
+    ports:
+      - "127.0.0.1:${API_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  web:
+    build: ./frontend
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      # Local-only by default. Set WEB_BIND=0.0.0.0 to expose it, and set SIM_API_TOKEN too.
+      - "${WEB_BIND:-127.0.0.1}:${WEB_PORT:-8080}:80"
+
+volumes:
+  qdrant_data:
+  api_data:

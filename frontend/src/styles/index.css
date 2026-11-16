@@ -1,0 +1,81 @@
+@import "tailwindcss";
+@import "@fontsource-variable/vazirmatn";
+@import "./motion.css";
+@import "./hud.css";
+
+/*
+ * HUD theme (surfaces, effects and keyframes live in hud.css): one dark, cyan-on-navy palette (the interface is a console, so it
+ * does not follow the OS light/dark setting). shadcn-style token names are kept
+ * so every existing class (bg-muted, ring-ring, …) resolves here.
+ */
+:root {
+  --background: oklch(0.145 0.025 245);
+  --foreground: oklch(0.93 0.02 215);
+  --card: oklch(0.185 0.03 245);
+  --muted: oklch(0.235 0.035 240);
+  --muted-foreground: oklch(0.74 0.035 220);
+  --border: oklch(0.33 0.05 225);
+  --ring: oklch(0.82 0.13 205);
+  --primary: oklch(0.82 0.13 205);
+  --primary-foreground: oklch(0.16 0.03 240);
+  --accent: oklch(0.27 0.06 215);
+  --destructive: oklch(0.68 0.2 25);
+  --dup: oklch(0.72 0.17 25);
+  --dup-soft: oklch(0.3 0.07 25);
+  --sim: oklch(0.82 0.14 80);
+  --sim-soft: oklch(0.32 0.06 80);
+  --uniq: oklch(0.8 0.15 160);
+  --uniq-soft: oklch(0.3 0.06 160);
+}
+
+@theme inline {
+  --font-sans: "Vazirmatn Variable", "Vazirmatn", ui-sans-serif, system-ui, sans-serif;
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-ring: var(--ring);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-accent: var(--accent);
+  --color-destructive: var(--destructive);
+  --color-dup: var(--dup);
+  --color-dup-soft: var(--dup-soft);
+  --color-sim: var(--sim);
+  --color-sim-soft: var(--sim-soft);
+  --color-uniq: var(--uniq);
+  --color-uniq-soft: var(--uniq-soft);
+}
+
+/* Tighter corners everywhere: instrument panels, not soft cards. */
+@theme {
+  --radius-lg: 0.3125rem;
+  --radius-xl: 0.4375rem;
+  --radius-2xl: 0.5625rem;
+}
+
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+  html {
+    color-scheme: dark;
+  }
+  body {
+    background: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+  }
+  ::selection {
+    background: color-mix(in oklab, var(--primary) 35%, transparent);
+  }
+}
+
+/* Figures that stack or align must not jitter between digits. */
+.nums {
+  font-variant-numeric: tabular-nums;
+}

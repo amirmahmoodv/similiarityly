@@ -1,0 +1,516 @@
+/* HUD surface, ambient backdrop and the keyframes shared by the console look. */
+
+@property --hud-spot {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 0;
+}
+@property --hud-scan {
+  syntax: "<percentage>";
+  inherits: false;
+  initial-value: -20%;
+}
+
+/* In the components layer so Tailwind utilities (focus rings, radii) still win. */
+@layer components {
+/* ---- Backdrop: a faint blueprint grid that fades toward the edges ---------- */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-image:
+    radial-gradient(60rem 36rem at 50% -10%, color-mix(in oklab, var(--primary) 13%, transparent), transparent 70%),
+    linear-gradient(color-mix(in oklab, var(--primary) 7%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in oklab, var(--primary) 7%, transparent) 1px, transparent 1px);
+  background-size: auto, 44px 44px, 44px 44px;
+  mask-image: radial-gradient(ellipse at 50% 20%, black 30%, transparent 85%);
+}
+
+/* ---- Panel: bracketed corners + a spotlight that follows the pointer ------- */
+.hud-panel {
+  position: relative;
+  background-color: var(--card);
+  animation: hud-panel-in 480ms var(--motion-ease-standard) backwards;
+  background-image:
+    /* scan band: parked above the panel, sweeps down once on hover */
+    linear-gradient(
+      180deg,
+      transparent calc(var(--hud-scan) - 16%),
+      color-mix(in oklab, var(--primary) 16%, transparent) var(--hud-scan),
+      transparent calc(var(--hud-scan) + 1%)
+    ),
+    radial-gradient(
+      18rem circle at var(--hud-x, 50%) var(--hud-y, 0%),
+      color-mix(in oklab, var(--primary) calc(var(--hud-spot) * 15%), transparent),
+      transparent 70%
+    ),
+    linear-gradient(180deg, color-mix(in oklab, var(--primary) 6%, transparent), transparent 45%);
+  box-shadow:
+    inset 0 1px 0 color-mix(in oklab, var(--primary) 14%, transparent),
+    0 14px 32px -20px rgb(0 0 0 / 0.8);
+  transition:
+    --hud-spot var(--motion-panel) var(--motion-ease-standard),
+    --hud-scan 0s,
+    transform 200ms ease-out,
+    border-color var(--motion-standard) var(--motion-ease-standard),
+    box-shadow var(--motion-standard) var(--motion-ease-standard);
+}
+.hud-panel:hover {
+  --hud-spot: 1;
+  --hud-scan: 125%;
+  transition:
+    --hud-spot var(--motion-panel) var(--motion-ease-standard),
+    --hud-scan 900ms ease-out,
+    transform 200ms ease-out,
+    border-color var(--motion-standard) var(--motion-ease-standard),
+    box-shadow var(--motion-standard) var(--motion-ease-standard);
+}
+/* Tiles and cards that tilt toward the pointer (angles come from usePointerEffects). */
+.hud-tilt {
+  transform: perspective(900px) rotateX(var(--hud-rx, 0deg)) rotateY(var(--hud-ry, 0deg))
+    translateY(var(--hud-lift, 0px));
+}
+.hud-tilt:hover {
+  --hud-lift: -4px;
+}
+a.hud-tilt:active {
+  --hud-lift: 1px;
+}
+/* The icon badge inside a panel turns once when the panel is hovered. */
+.hud-chip {
+  transition: transform 700ms var(--motion-ease-standard);
+}
+.hud-panel:hover .hud-chip {
+  transform: rotate(360deg) scale(1.12);
+}
+.hud-panel::before,
+.hud-panel::after {
+  content: "";
+  position: absolute;
+  width: 0.875rem;
+  height: 0.875rem;
+  pointer-events: none;
+  border: 0 solid var(--primary);
+  opacity: 0.7;
+  transition:
+    width var(--motion-standard) var(--motion-ease-standard),
+    height var(--motion-standard) var(--motion-ease-standard),
+    opacity var(--motion-standard) var(--motion-ease-standard);
+}
+.hud-panel::before {
+  inset-block-start: -1px;
+  inset-inline-start: -1px;
+  border-block-start-width: 2px;
+  border-inline-start-width: 2px;
+  border-start-start-radius: inherit;
+}
+.hud-panel::after {
+  inset-block-end: -1px;
+  inset-inline-end: -1px;
+  border-block-end-width: 2px;
+  border-inline-end-width: 2px;
+  border-end-end-radius: inherit;
+}
+.hud-panel:hover::before,
+.hud-panel:hover::after,
+.hud-panel:focus-visible::before,
+.hud-panel:focus-visible::after {
+  width: 1.625rem;
+  height: 1.625rem;
+  opacity: 1;
+}
+/* Panels that navigate somewhere light up fully. */
+a.hud-panel:hover {
+  border-color: color-mix(in oklab, var(--primary) 60%, transparent);
+  box-shadow:
+    inset 0 1px 0 color-mix(in oklab, var(--primary) 20%, transparent),
+    0 0 26px -10px var(--primary),
+    0 14px 32px -20px rgb(0 0 0 / 0.8);
+}
+
+/* ---- Text and small parts -------------------------------------------------- */
+.hud-glow {
+  text-shadow: 0 0 18px color-mix(in oklab, currentColor 45%, transparent);
+}
+/* Latin gets the wide instrument-label treatment; tracking breaks Persian joining. */
+.hud-label {
+  font-size: 0.75rem;
+  color: var(--muted-foreground);
+}
+:lang(en) .hud-label {
+  font-size: 0.6875rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.hud-rule {
+  animation: hud-draw 520ms var(--motion-ease-standard) 80ms both;
+}
+
+/* ---- Controls: sheen + pointer glow on hover, ripple on press -------------- */
+.hud-sheen,
+.hud-btn {
+  position: relative;
+  overflow: hidden;
+  --hud-fx: color-mix(in oklab, currentColor 26%, transparent);
+}
+/* Solid cyan controls need a white effect; currentColor there is near-black. */
+.hud-sheen {
+  --hud-fx: rgb(255 255 255 / 0.5);
+}
+.hud-sheen::after,
+.hud-btn::after {
+  content: "";
+  position: absolute;
+  inset-block: 0;
+  left: 0;
+  width: 45%;
+  pointer-events: none;
+  background: linear-gradient(100deg, transparent, var(--hud-fx), transparent);
+  transform: translateX(-130%) skewX(-18deg);
+}
+.hud-sheen:hover:not(:disabled)::after,
+.hud-btn:hover:not(:disabled)::after {
+  transform: translateX(330%) skewX(-18deg);
+  transition: transform 620ms var(--motion-ease-standard);
+}
+.hud-btn::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(4.5rem circle at var(--hud-x, 50%) var(--hud-y, 50%), var(--hud-fx), transparent 70%);
+  opacity: 0;
+  transition: opacity var(--motion-standard) var(--motion-ease-standard);
+}
+.hud-btn:hover:not(:disabled)::before {
+  opacity: 1;
+}
+.hud-btn > svg {
+  transition: transform var(--motion-standard) var(--motion-ease-standard);
+}
+.hud-btn:hover > svg:not(.hud-spinner) {
+  transform: scale(1.18) rotate(-8deg);
+}
+.hud-ripple {
+  position: absolute;
+  border-radius: 9999px;
+  pointer-events: none;
+  background: var(--hud-fx);
+  animation: hud-ripple 600ms var(--motion-ease-standard) forwards;
+}
+
+/* Ring left wherever the pointer presses, anywhere on the page. */
+.hud-ping {
+  position: fixed;
+  z-index: 70;
+  pointer-events: none;
+}
+.hud-ping > i {
+  position: absolute;
+  inset: -7px;
+  border-radius: 9999px;
+  border: 1.5px solid var(--primary);
+  box-shadow: 0 0 12px var(--primary);
+  animation: hud-ping 650ms var(--motion-ease-standard) both;
+}
+.hud-ping > i + i {
+  border-width: 1px;
+  animation-duration: 850ms;
+  animation-delay: 90ms;
+}
+
+/* ---- Loading --------------------------------------------------------------- */
+.hud-spinner * {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.hud-spinner-a {
+  animation: hud-spin 0.9s linear infinite;
+}
+.hud-spinner-b {
+  animation: hud-spin 1.3s linear infinite reverse;
+}
+.hud-fetchbar {
+  position: fixed;
+  inset-inline: 0;
+  top: 0;
+  z-index: 50;
+  height: 2px;
+  overflow: hidden;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity var(--motion-standard) var(--motion-ease-standard);
+}
+.hud-fetchbar.is-on {
+  opacity: 1;
+  transition-delay: 120ms;
+}
+.hud-fetchbar > span {
+  display: block;
+  width: 40%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, var(--primary), transparent);
+  box-shadow: 0 0 12px var(--primary);
+  animation: hud-slide 1.1s ease-in-out infinite paused;
+}
+.hud-fetchbar.is-on > span {
+  animation-play-state: running;
+}
+
+/* ---- Signal waves along the bottom of the viewport ------------------------- */
+.hud-waves {
+  position: fixed;
+  inset-inline: 0;
+  bottom: 0;
+  z-index: -1;
+  height: min(36vh, 19rem);
+  overflow: hidden;
+  pointer-events: none;
+  color: var(--primary);
+  mask-image: linear-gradient(90deg, transparent, black 12%, black 88%, transparent);
+  transition:
+    color var(--motion-panel) var(--motion-ease-standard),
+    opacity var(--motion-panel) var(--motion-ease-standard);
+}
+.hud-waves > svg {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 200%;
+  height: 100%;
+  animation: hud-flow var(--d) linear infinite;
+}
+.hud-waves[data-state="active"] > svg {
+  animation-duration: calc(var(--d) / 3);
+}
+.hud-waves[data-state="connecting"] {
+  opacity: 0.4;
+}
+.hud-waves[data-state="offline"] {
+  color: var(--destructive);
+}
+.hud-waves[data-state="offline"] > svg {
+  animation-play-state: paused;
+}
+
+.hud-skeleton {
+  border: 1px solid color-mix(in oklab, var(--primary) 12%, transparent);
+  background: linear-gradient(
+    100deg,
+    var(--muted) 35%,
+    color-mix(in oklab, var(--primary) 20%, var(--muted)) 50%,
+    var(--muted) 65%
+  );
+  background-size: 220% 100%;
+  animation: hud-shimmer 1.5s linear infinite;
+}
+
+/* A meter fills from its start edge when it appears. */
+.hud-fill {
+  transform-origin: left;
+  animation: hud-draw 600ms var(--motion-ease-standard) both;
+  box-shadow: 0 0 10px -1px currentColor;
+}
+[dir="rtl"] .hud-fill,
+[dir="rtl"] .hud-rule {
+  transform-origin: right;
+}
+.hud-rule {
+  transform-origin: left;
+}
+
+/* Page title wipes in from its start edge. */
+.hud-title {
+  animation: hud-wipe 560ms var(--motion-ease-standard) backwards;
+}
+[dir="rtl"] .hud-title {
+  animation-name: hud-wipe-rtl;
+}
+
+/* Radar rings around the icon of an empty state. */
+.hud-radar {
+  position: relative;
+}
+.hud-radar::before,
+.hud-radar::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  border: 1px solid var(--primary);
+  pointer-events: none;
+  animation: hud-radar 2.8s ease-out infinite;
+}
+.hud-radar::after {
+  animation-delay: 1.4s;
+}
+.hud-radar > svg {
+  animation: hud-float 3.2s ease-in-out infinite;
+}
+
+/* Sections of a page cascade in after a route change. */
+.hud-page > * {
+  animation: hud-rise 520ms var(--motion-ease-standard) backwards;
+}
+.hud-page > :nth-child(2) { animation-delay: 70ms; }
+.hud-page > :nth-child(3) { animation-delay: 140ms; }
+.hud-page > :nth-child(4) { animation-delay: 210ms; }
+.hud-page > :nth-child(n + 5) { animation-delay: 280ms; }
+
+/* Children rise into place one after another (grids of tiles/cards). */
+.hud-stagger > * {
+  animation: hud-rise 460ms var(--motion-ease-standard) backwards;
+}
+.hud-stagger > :nth-child(2) { animation-delay: 60ms; }
+.hud-stagger > :nth-child(3) { animation-delay: 120ms; }
+.hud-stagger > :nth-child(4) { animation-delay: 180ms; }
+.hud-stagger > :nth-child(5) { animation-delay: 240ms; }
+.hud-stagger > :nth-child(6) { animation-delay: 300ms; }
+.hud-stagger > :nth-child(n + 7) { animation-delay: 360ms; }
+
+/* ---- Reactor: the mark in the sidebar; speed and colour mirror real state -- */
+.reactor {
+  color: var(--primary);
+  filter: drop-shadow(0 0 6px color-mix(in oklab, currentColor 55%, transparent));
+  transition:
+    color var(--motion-panel) var(--motion-ease-standard),
+    opacity var(--motion-panel) var(--motion-ease-standard);
+}
+.reactor * {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.reactor-outer {
+  animation: hud-spin 40s linear infinite;
+}
+.reactor-arcs {
+  animation: hud-spin 18s linear infinite reverse;
+}
+.reactor[data-state="active"] .reactor-outer {
+  animation-duration: 9s;
+}
+.reactor[data-state="active"] .reactor-arcs {
+  animation-duration: 3.2s;
+}
+.reactor[data-state="active"] .reactor-core {
+  animation: hud-pulse 1.4s ease-in-out infinite;
+}
+.reactor[data-state="connecting"] {
+  opacity: 0.45;
+}
+.reactor[data-state="offline"] {
+  color: var(--destructive);
+}
+/* Waiting on the server: dim, arcs searching quickly. Offline: stopped. */
+.reactor[data-state="connecting"] .reactor-arcs {
+  animation-duration: 1.4s;
+}
+.reactor[data-state="offline"] :is(.reactor-outer, .reactor-arcs) {
+  animation: none;
+}
+} /* @layer components */
+
+@keyframes hud-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes hud-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.985);
+  }
+}
+@keyframes hud-wipe {
+  from {
+    clip-path: inset(0 100% 0 0);
+    opacity: 0;
+  }
+  to {
+    clip-path: inset(0 -1rem 0 0);
+  }
+}
+@keyframes hud-wipe-rtl {
+  from {
+    clip-path: inset(0 0 0 100%);
+    opacity: 0;
+  }
+  to {
+    clip-path: inset(0 0 0 -1rem);
+  }
+}
+@keyframes hud-radar {
+  from {
+    transform: scale(1);
+    opacity: 0.7;
+  }
+  to {
+    transform: scale(2.6);
+    opacity: 0;
+  }
+}
+@keyframes hud-float {
+  50% {
+    transform: translateY(-3px);
+  }
+}
+@keyframes hud-ripple {
+  from {
+    transform: scale(0);
+    opacity: 1;
+  }
+  to {
+    transform: scale(1);
+    opacity: 0;
+  }
+}
+@keyframes hud-ping {
+  from {
+    transform: scale(0.4);
+    opacity: 1;
+  }
+  to {
+    transform: scale(5);
+    opacity: 0;
+  }
+}
+@keyframes hud-slide {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(250%);
+  }
+}
+@keyframes hud-flow {
+  to {
+    transform: translateX(-50%);
+  }
+}
+@keyframes hud-pulse {
+  50% {
+    opacity: 0.45;
+  }
+}
+@keyframes hud-shimmer {
+  from {
+    background-position: 110% 0;
+  }
+  to {
+    background-position: -110% 0;
+  }
+}
+@keyframes hud-draw {
+  from {
+    transform: scaleX(0);
+  }
+}
+@keyframes hud-rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.98);
+  }
+}

@@ -1,0 +1,26 @@
+node_modules/
+dist/
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+*.tsbuildinfo
+
+# Runtime data: SQLite/Qdrant files, downloaded models, settings.json with API keys
+backend/data/
+data/
+*.db
+*.db.migrated
+settings.json
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Local tooling
+.claude/
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
