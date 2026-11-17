@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 from typing import Annotated, Literal
 
-from pydantic import field_validator, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic.fields import FieldInfo
 from pydantic_settings import (
     BaseSettings,
@@ -72,6 +72,10 @@ class Settings(BaseSettings):
     qdrant_api_key: str | None = None
     # Dev/test only: a throwaway in-memory Qdrant. Saving a Qdrant in the UI turns it off.
     qdrant_in_memory: bool = False
+    # Seconds per request to a Qdrant server. qdrant-client's default of 5 s is
+    # too short for a remote server: switching to one creates collections and
+    # waits for payload indexes, and each of those calls can take longer.
+    qdrant_timeout: int = Field(60, ge=1, le=600)
     collection_prefix: str = "sim_"
 
     openai_base_url: str = "https://api.openai.com/v1"

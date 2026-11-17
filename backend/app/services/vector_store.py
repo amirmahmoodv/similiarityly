@@ -41,7 +41,10 @@ def connect(settings: Settings) -> tuple[QdrantClient, str]:
     if settings.qdrant_in_memory:
         return QdrantClient(":memory:"), "memory"
     if settings.qdrant_url:
-        return server_client(settings.qdrant_url, settings.qdrant_api_key), "server"
+        client = server_client(
+            settings.qdrant_url, settings.qdrant_api_key, timeout=settings.qdrant_timeout
+        )
+        return client, "server"
     path = settings.data_dir / "qdrant"
     path.mkdir(parents=True, exist_ok=True)
     return QdrantClient(path=str(path)), "embedded"

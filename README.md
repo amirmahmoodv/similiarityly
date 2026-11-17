@@ -88,6 +88,7 @@ Only process-level settings stay in the environment — see
 | --- | --- |
 | `SIM_API_TOKEN` | Shared access token. When set, every `/api/` call needs `Authorization: Bearer <token>`; the UI asks for it once. |
 | `SIM_DEFAULT_QDRANT_URL` | Qdrant server used until one is saved in Settings (compose sets it to the bundled service). Empty = embedded. |
+| `SIM_QDRANT_TIMEOUT` | Seconds per request to a Qdrant server (default 60). Raise it for a slow or distant Qdrant. |
 | `SIM_DATA_DIR` | Where runtime settings, embedded Qdrant files and downloaded models live. |
 | `SIM_CORS_ORIGINS` | Browser origins allowed to call the API from another origin (comma-separated or JSON list). Only for a separate API domain. |
 | `SIM_ENABLE_DOCS` | Serve `/docs` and `/openapi.json` (off by default). |

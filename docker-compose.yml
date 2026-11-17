@@ -39,6 +39,8 @@ services:
       # Bundled Qdrant, used until another one is saved on the Settings page.
       # All connections (Qdrant, embedding service, LLM) are configured there.
       SIM_DEFAULT_QDRANT_URL: http://qdrant:6333
+      # Seconds per request to Qdrant; raise for a slow or distant server.
+      SIM_QDRANT_TIMEOUT: ${SIM_QDRANT_TIMEOUT:-60}
       # Strongly recommended whenever the web port is reachable from other machines.
       SIM_API_TOKEN: ${SIM_API_TOKEN:-}
       # Only for a separate API domain: the UI's origin, e.g. https://sim.example.com.

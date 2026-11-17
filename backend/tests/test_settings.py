@@ -236,7 +236,7 @@ def test_cors_allows_the_configured_ui_origin(tmp_path):
 def test_qdrant_url_without_port_uses_scheme_default(url, port, https):
     from app.services.vector_store import server_client
 
-    client = server_client(url, None)
+    client = server_client(url, None, check_compatibility=False)  # no network in tests
     try:
         remote = client._client
         assert remote._port == port and remote._https is https
@@ -264,3 +264,34 @@ def test_unhandled_error_is_json_500_with_cors(tmp_path):
     assert res.status_code == 500
     assert res.json() == {"detail": "internal_error"}
     assert res.headers["access-control-allow-origin"] == "https://sim.example.com"
+
+
+def test_server_client_uses_the_configured_timeout(monkeypatch, tmp_path):
+    from app.services import vector_store
+
+    captured = {}
+
+    def fake_client(url, api_key, **kwargs):
+        captured.update(kwargs, url=url)
+        return object()
+
+    monkeypatch.setattr(vector_store, "server_client", fake_client)
+    s = Settings(_env_file=None, data_dir=tmp_path, default_qdrant_url="https://q.example.com")
+    assert s.qdrant_timeout == 60  # default: room for a remote server's setup calls
+    vector_store.connect(s)
+    assert captured == {"url": "https://q.example.com", "timeout": 60}
+
+    monkeypatch.setenv("SIM_QDRANT_TIMEOUT", "120")
+    s = Settings(_env_file=None, data_dir=tmp_path, default_qdrant_url="https://q.example.com")
+    vector_store.connect(s)
+    assert captured["timeout"] == 120
+
+
+def test_server_client_passes_timeout_to_qdrant_client():
+    from app.services.vector_store import server_client
+
+    client = server_client("https://q.example.com", None, timeout=60, check_compatibility=False)
+    try:
+        assert client._client._timeout == 60
+    finally:
+        client.close()
