@@ -1,6 +1,6 @@
 import * as React from "react";
 import { motion, useReducedMotion } from "motion/react";
-import { AlertCircle } from "lucide-react";
+import { AlertCircle, Tag } from "lucide-react";
 import { SignalTrace } from "@/components/hud/signal-trace";
 import { HudSpinner } from "@/components/hud/spinner";
 import { ApiError } from "@/lib/api";
@@ -287,6 +287,26 @@ export function StatusBadge({ status }: { status: RecordStatus }) {
       )}
     >
       {t.status[status]}
+    </span>
+  );
+}
+
+/** A record's label (from the load's label column), kept apart from its text. Renders nothing when empty. */
+export function RecordLabel({ label, className }: { label: string; className?: string }) {
+  const { t } = useI18n();
+  if (!label) return null;
+  return (
+    <span
+      dir="auto"
+      title={`${t.ingest.labelBadge}: ${label}`}
+      className={cn(
+        "inline-flex max-w-full items-center gap-1 rounded-md border border-primary/30 bg-accent/50 px-1.5 py-0.5 font-mono text-xs text-primary",
+        className,
+      )}
+    >
+      <Tag className="size-3 shrink-0" aria-hidden="true" />
+      <span className="sr-only">{t.ingest.labelBadge}: </span>
+      <span className="break-all">{label}</span>
     </span>
   );
 }

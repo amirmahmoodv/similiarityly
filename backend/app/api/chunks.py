@@ -78,6 +78,7 @@ def browse_chunks(
         RecordChunks(
             record_id=r.id,
             ordinal=r.ordinal,
+            label=r.label,
             source_id=r.source_id,
             source_name=names.get(r.source_id, ""),
             chunk_count=r.chunk_count,
@@ -118,6 +119,7 @@ def _search_chunks(
             RecordChunks(
                 record_id=record.id,
                 ordinal=record.ordinal,
+                label=record.label,
                 source_id=record.source_id,
                 source_name=names.get(record.source_id, ""),
                 chunk_count=record.chunk_count,

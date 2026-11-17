@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, CheckCheck, FileUp, Play, X } from "lucide-react";
+import { Check, CheckCheck, FileUp, Play, Tag, X } from "lucide-react";
 import * as React from "react";
 import { useNavigate } from "react-router-dom";
 import { AnimatedTabs } from "@/components/motion";
@@ -21,7 +21,9 @@ import type { IngestMode, Repo } from "@/lib/types";
 
 type InputTab = "file" | "list" | "text";
 const MODES: IngestMode[] = ["check_and_index", "check_only", "index_only"];
-const ACCEPT = ".xlsx,.xlsm,.csv,.tsv,.txt,.md,.docx,.pdf";
+/** Select value for "no label column": column names come from the file, so not "". */
+const NO_LABEL = "\u0000none";
+const ACCEPT =".xlsx,.xlsm,.csv,.tsv,.txt,.md,.docx,.pdf";
 
 function countRecords(text: string, split: "lines" | "paragraphs" | "whole"): number {
   if (!text.trim()) return 0;
@@ -45,6 +47,7 @@ export function IngestPanel({ repo }: { repo: Repo }) {
   const [sheet, setSheet] = React.useState<string | undefined>();
   const [hasHeader, setHasHeader] = React.useState(true);
   const [columns, setColumns] = React.useState<string[]>([]);
+  const [labelColumn, setLabelColumn] = React.useState<string | null>(null);
   const fileInput = React.useRef<HTMLInputElement>(null);
 
   const preview = useQuery({
@@ -69,6 +72,7 @@ export function IngestPanel({ repo }: { repo: Repo }) {
     setFile(next);
     setSheet(undefined);
     setColumns([]);
+    setLabelColumn(null);
     start.reset();
   };
 
@@ -93,7 +97,12 @@ export function IngestPanel({ repo }: { repo: Repo }) {
         ...base,
         kind: "file",
         file: file!,
-        options: { sheet, has_header: hasHeader, text_columns: columns },
+        options: {
+          sheet,
+          has_header: hasHeader,
+          text_columns: columns,
+          label_column: labelColumn,
+        },
       });
     } else if (tab === "list") {
       start.mutate({ ...base, kind: "text", split: "lines", text: listText });
@@ -103,6 +112,8 @@ export function IngestPanel({ repo }: { repo: Repo }) {
   };
 
   const data = preview.data;
+  const textChoices =
+    data?.kind === "tabular" ? data.columns.filter((c) => c !== labelColumn) : [];
 
   return (
     <form onSubmit={submit} className="grid items-start gap-4 lg:grid-cols-[1fr_20rem]">
@@ -169,6 +180,7 @@ export function IngestPanel({ repo }: { repo: Repo }) {
                           onValueChange={(v) => {
                             setSheet(v);
                             setColumns([]);
+                            setLabelColumn(null);
                           }}
                           options={data.sheets.map((s) => ({ value: s, label: s }))}
                         />
@@ -182,23 +194,46 @@ export function IngestPanel({ repo }: { repo: Repo }) {
                       onCheckedChange={(v) => {
                         setHasHeader(v);
                         setColumns([]);
+                        setLabelColumn(null);
                       }}
                     />
                   </div>
+                  <Field
+                    label={t.ingest.labelColumn}
+                    hint={t.ingest.labelColumnHint}
+                    className="sm:col-span-2"
+                  >
+                    {(ids) => (
+                      <Select
+                        {...ids}
+                        value={labelColumn ?? NO_LABEL}
+                        onValueChange={(v) => {
+                          const next = v === NO_LABEL ? null : v;
+                          setLabelColumn(next);
+                          // The label is never compared, so it cannot also be a text column.
+                          if (next) setColumns((cs) => cs.filter((c) => c !== next));
+                        }}
+                        options={[
+                          { value: NO_LABEL, label: t.ingest.noLabelColumn },
+                          ...data.columns.map((c) => ({ value: c, label: c })),
+                        ]}
+                      />
+                    )}
+                  </Field>
                 </div>
 
                 <fieldset>
                   <legend className="text-sm font-medium">{t.ingest.columns}</legend>
                   <div className="mb-2 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
                     <p className="text-xs text-muted-foreground">{t.ingest.columnsHint}</p>
-                    {data.columns.length > 1 &&
+                    {textChoices.length > 1 &&
                       (() => {
-                        const all = data.columns.every((c) => columns.includes(c));
+                        const all = textChoices.every((c) => columns.includes(c));
                         const Icon = all ? X : CheckCheck;
                         return (
                           <button
                             type="button"
-                            onClick={() => setColumns(all ? [] : [...data.columns])}
+                            onClick={() => setColumns(all ? [] : [...textChoices])}
                             className="hud-btn inline-flex shrink-0 items-center gap-1.5 rounded-full border border-primary/40 px-3 py-1 text-xs font-semibold text-primary outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
                           >
                             <Icon className="size-3.5" aria-hidden="true" />
@@ -210,20 +245,31 @@ export function IngestPanel({ repo }: { repo: Repo }) {
                   <div className="flex flex-wrap gap-2">
                     {data.columns.map((column) => {
                       const on = columns.includes(column);
+                      const isLabel = column === labelColumn;
                       return (
                         <button
                           key={column}
                           type="button"
                           aria-pressed={on}
+                          disabled={isLabel}
+                          title={isLabel ? t.ingest.labelColumn : undefined}
                           onClick={() =>
                             setColumns(on ? columns.filter((c) => c !== column) : [...columns, column])
                           }
                           className={cn(
                             "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring",
-                            on ? "border-primary bg-accent text-primary" : "hover:bg-muted",
+                            isLabel
+                              ? "cursor-not-allowed border-dashed text-muted-foreground"
+                              : on
+                                ? "border-primary bg-accent text-primary"
+                                : "hover:bg-muted",
                           )}
                         >
-                          {on && <Check className="size-3.5" aria-hidden="true" />}
+                          {isLabel ? (
+                            <Tag className="size-3.5" aria-hidden="true" />
+                          ) : (
+                            on && <Check className="size-3.5" aria-hidden="true" />
+                          )}
                           {column}
                         </button>
                       );
@@ -244,9 +290,15 @@ export function IngestPanel({ repo }: { repo: Repo }) {
                               className={cn(
                                 "whitespace-nowrap px-3 py-2 text-start font-medium",
                                 columns.includes(c) && "text-primary",
+                                c === labelColumn && "text-sim",
                               )}
                             >
-                              {c}
+                              <span className="inline-flex items-center gap-1">
+                                {c === labelColumn && (
+                                  <Tag className="size-3.5" aria-label={t.ingest.labelColumn} />
+                                )}
+                                {c}
+                              </span>
                             </th>
                           ))}
                         </tr>

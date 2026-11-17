@@ -113,6 +113,7 @@ def job_records(
             id=r.id,
             ordinal=r.ordinal,
             text=r.text,
+            label=r.label,
             meta=r.meta,
             chunk_count=r.chunk_count,
             max_score=r.max_score,
@@ -163,16 +164,29 @@ def export_job(job_id: str, services: Services = Depends(get_services)):
     similar, duplicate = _thresholds(job, services)
     buf = io.StringIO()
     writer = csv.writer(buf)
-    writer.writerow(["ordinal", "status", "score", "match_count", "text", "best_match_text"])
+    writer.writerow(
+        [
+            "ordinal",
+            "label",
+            "status",
+            "score",
+            "match_count",
+            "text",
+            "best_match_label",
+            "best_match_text",
+        ]
+    )
     records = services.meta.all(Record, {"source_id": job.source_id}) if job.source_id else []
     for r in sorted(records, key=lambda r: r.ordinal):
         writer.writerow(
             [
                 r.ordinal,
+                _csv_safe(r.label),
                 _status(r.max_score, similar, duplicate),
                 f"{r.max_score:.4f}",
                 r.match_count,
                 _csv_safe(r.text),
+                _csv_safe(r.best_match_label),
                 _csv_safe(r.best_match_text),
             ]
         )

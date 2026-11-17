@@ -243,6 +243,53 @@ def test_file_preview_ingest_and_source_delete(client):
     assert records(client, job["id"])[0]["status"] == "unique"
 
 
+def test_label_column_names_records_matches_search_hits_and_export(client):
+    import csv
+    import io
+
+    repo = make_repo(client)
+    csv_bytes = "کد,شرح\n1.2-001,نصب دوربین مداربسته\n1.2-002,نصب دوربین مدار بسته\n".encode()
+    upload = {"file": ("items.csv", csv_bytes, "text/csv")}
+
+    bad = client.post(
+        f"{API}/repos/{repo['id']}/ingest",
+        data={"input_kind": "file", "options": '{"label_column": "ستون"}'},
+        files=upload,
+    )
+    assert bad.status_code == 400 and bad.json()["detail"] == "unknown_label_column"
+
+    # No text_columns: every column but the label is compared.
+    res = client.post(
+        f"{API}/repos/{repo['id']}/ingest",
+        data={"input_kind": "file", "options": '{"label_column": "کد"}'},
+        files=upload,
+    )
+    job = res.json()
+    items = records(client, job["id"])
+    assert [i["label"] for i in items] == ["1.2-001", "1.2-002"]
+    assert items[0]["text"] == "نصب دوربین مداربسته"  # the code is not in the text
+
+    matches = client.get(f"{API}/records/{items[1]['id']}/matches").json()
+    assert matches[0]["matched_label"] == "1.2-001"
+
+    hits = client.post(
+        f"{API}/repos/{repo['id']}/search", json={"query": "نصب دوربین مداربسته"}
+    ).json()
+    assert {h["label"] for h in hits} == {"1.2-001", "1.2-002"}
+
+    chunks = client.get(f"{API}/repos/{repo['id']}/chunks").json()
+    assert {r["label"] for r in chunks["items"]} == {"1.2-001", "1.2-002"}
+
+    export = client.get(f"{API}/jobs/{job['id']}/export.csv").text.lstrip("﻿")
+    rows = list(csv.DictReader(io.StringIO(export)))
+    assert rows[1]["label"] == "1.2-002" and rows[1]["best_match_label"] == "1.2-001"
+    assert rows[0]["best_match_label"] == ""
+
+    # Loads without a label column keep working and stay unlabeled.
+    plain = records(client, ingest_lines(client, repo["id"], ["متن بدون برچسب"])["id"])
+    assert plain[0]["label"] == ""
+
+
 def test_validation_and_errors(client):
     repo = make_repo(client)
     assert client.post(f"{API}/repos", json={"name": repo["name"]}).status_code == 409

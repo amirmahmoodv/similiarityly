@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from app.api.repos import get_repo
 from app.core.state import Services, get_services
-from app.models import Source
+from app.models import Record, Source
 from app.schemas import RepoConfig, SearchHit, SearchRequest
 from app.services.embeddings import EmbeddingError
 from app.services.pipeline import embed_texts, score_hits
@@ -37,6 +37,7 @@ def search_repo(repo_id: str, body: SearchRequest, services: Services = Depends(
     except RerankError as exc:
         raise HTTPException(502, "rerank_failed") from exc
     names: dict[str, str] = {}
+    records = services.meta.get_many(Record, [s.hit.record_id for s in hits])
     out = []
     for s in hits:
         h = s.hit
@@ -49,6 +50,7 @@ def search_repo(repo_id: str, body: SearchRequest, services: Services = Depends(
                 vector_score=s.vector_score,
                 text=h.text,
                 record_id=h.record_id,
+                label=records[h.record_id].label if h.record_id in records else "",
                 chunk_index=h.chunk_index,
                 source_id=h.source_id,
                 source_name=names[h.source_id],

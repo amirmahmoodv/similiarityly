@@ -129,7 +129,13 @@ export type IngestInput = {
   | {
       kind: "file";
       file: File;
-      options: { sheet?: string; has_header?: boolean; text_columns?: string[] };
+      options: {
+        sheet?: string;
+        has_header?: boolean;
+        text_columns?: string[];
+        /** Names each record; kept out of the compared text. */
+        label_column?: string | null;
+      };
     }
 );
 

@@ -189,12 +189,13 @@ def run_ingest(services: Services, job_id: str) -> None:
                     prepared[sig] = prepare(texts, target_cfgs[t.id], services)
             own = prepared[cfg.index_signature()]
             matches: list[Match] = []
+            best_record: dict[str, str] = {}  # record id -> its best match's record id
 
             for i, rec in enumerate(batch):
                 rec.chunk_count = len(own[i].chunks)
                 if check:
                     best: float | None = None
-                    top_hit = (0.0, "")
+                    top_hit = (0.0, "", "")
                     count = 0
                     for t in targets:
                         if t.vector_size is None or t.needs_reindex:
@@ -216,7 +217,7 @@ def run_ingest(services: Services, job_id: str) -> None:
                                 top = max(top, score)
                                 stored = s.retrieval_score >= floor
                                 if stored and score > top_hit[0]:
-                                    top_hit = (score, h.text)
+                                    top_hit = (score, h.text, h.record_id)
                                 if not stored:
                                     continue
                                 count += 1
@@ -248,6 +249,8 @@ def run_ingest(services: Services, job_id: str) -> None:
                     rec.max_score = best or 0.0
                     rec.match_count = count
                     rec.best_match_text = top_hit[1]
+                    if top_hit[2]:
+                        best_record[rec.id] = top_hit[2]
 
                 if index and own[i].vectors:
                     if repo.vector_size is None:
@@ -263,6 +266,18 @@ def run_ingest(services: Services, job_id: str) -> None:
                             )
                         ],
                     )
+
+            # Snapshot the matched side's label, like its text, so it survives
+            # a later delete. One lookup per batch, not per hit.
+            matched = meta.get_many(
+                Record, [m.matched_record_id for m in matches] + list(best_record.values())
+            )
+            for m in matches:
+                hit_rec = matched.get(m.matched_record_id)
+                m.matched_label = hit_rec.label if hit_rec else ""
+            for rec in batch:
+                hit_rec = matched.get(best_record.get(rec.id, ""))
+                rec.best_match_label = hit_rec.label if hit_rec else ""
 
             meta.put_many(matches)
             meta.put_many(batch)

@@ -74,7 +74,8 @@ async def ingest(
     # text input: "lines" (a list), "paragraphs", or "whole" (one document)
     split: Literal["whole", "lines", "paragraphs"] = Form("lines"),
     text: str | None = Form(None),
-    # file input: {"sheet": str, "has_header": bool, "text_columns": [str]}
+    # file input: {"sheet": str, "has_header": bool, "text_columns": [str],
+    #              "label_column": str | null}
     options: str = Form("{}"),
     file: UploadFile | None = File(None),
     services: Services = Depends(get_services),
@@ -112,7 +113,15 @@ async def ingest(
     )
     job = Job(repo_id=repo.id, source_id=source.id, kind="ingest", mode=mode, total=len(records))
     rows = [
-        Record(repo_id=repo.id, source_id=source.id, ordinal=i, text=t, meta=m, indexed=indexed)
+        Record(
+            repo_id=repo.id,
+            source_id=source.id,
+            ordinal=i,
+            text=t,
+            label=str(m.get("label", "")),
+            meta=m,
+            indexed=indexed,
+        )
         for i, (t, m) in enumerate(records, start=1)
     ]
     return await run_in_threadpool(_start_load, services, source, rows, job)
@@ -128,7 +137,10 @@ def _parse(
                 columns, rows, _ = parsers.read_table(
                     data, filename, opts.get("sheet"), bool(opts.get("has_header", True))
                 )
-                records = parsers.table_records(columns, rows, opts.get("text_columns"))
+                label = opts.get("label_column")
+                if label is not None and label not in columns:
+                    raise HTTPException(400, "unknown_label_column")
+                records = parsers.table_records(columns, rows, opts.get("text_columns"), label)
                 kind = "csv" if PurePath(filename).suffix.lower() in {".csv", ".tsv"} else "excel"
                 return records, kind, filename
             return (

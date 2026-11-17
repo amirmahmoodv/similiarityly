@@ -80,15 +80,26 @@ def read_table(
 
 
 def table_records(
-    columns: list[str], rows: list[list[str]], text_columns: list[str] | None
+    columns: list[str],
+    rows: list[list[str]],
+    text_columns: list[str] | None,
+    label_column: str | None = None,
 ) -> list[RecordInput]:
-    chosen = [c for c in (text_columns or []) if c in columns] or columns
+    """One record per non-empty row. `label_column`, when given, names each
+    record (meta["label"]) and is kept out of the compared text: a code such as
+    "1.2-001" would otherwise make every record look a little alike."""
+    label_idx = columns.index(label_column) if label_column in columns else None
+    chosen = [c for c in (text_columns or []) if c in columns and c != label_column] or [
+        c for c in columns if c != label_column
+    ]
     idx = [columns.index(c) for c in chosen]
     records: list[RecordInput] = []
     for n, row in enumerate(rows, start=1):
         text = " | ".join(row[i] for i in idx if row[i])
         if text:
             meta = {"row": n, "fields": {c: v for c, v in zip(columns, row, strict=False) if v}}
+            if label_idx is not None and row[label_idx].strip():
+                meta["label"] = row[label_idx].strip()
             records.append((text, meta))
     return records
 

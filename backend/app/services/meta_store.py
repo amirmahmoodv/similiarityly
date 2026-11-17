@@ -132,6 +132,16 @@ class MetaStore:
             return None
         return entity.model_validate(points[0].payload) if points else None
 
+    def get_many(self, entity: type[E], ids: list[str]) -> dict[str, E]:
+        """Look up by point id in one request; missing ids are left out."""
+        unique = list(dict.fromkeys(i for i in ids if i))
+        if not unique:
+            return {}
+        with self._lock:
+            points = self._client.retrieve(self._name(entity), ids=unique, with_payload=True)
+        found = (entity.model_validate(p.payload) for p in points)
+        return {e.id: e for e in found}
+
     def find(
         self,
         entity: type[E],

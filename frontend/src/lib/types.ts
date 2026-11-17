@@ -93,6 +93,8 @@ export type RecordItem = {
   id: string;
   ordinal: number;
   text: string;
+  /** From the load's label column; "" when it had none. */
+  label: string;
   meta: Record<string, unknown>;
   chunk_count: number;
   max_score: number;
@@ -111,6 +113,7 @@ export type Match = {
   vector_score: number | null;
   matched_repo_id: string;
   matched_text: string;
+  matched_label: string;
   matched_repo_name: string;
   matched_source_name: string;
 };
@@ -192,6 +195,8 @@ export type SearchHit = {
   vector_score: number | null;
   text: string;
   record_id: string;
+  /** The chunk's record label; "" when its load had no label column. */
+  label: string;
   chunk_index: number;
   source_id: string;
   source_name: string;
@@ -204,6 +209,7 @@ export type Chunk = { id: string; chunk_index: number; text: string };
 export type RecordChunks = {
   record_id: string;
   ordinal: number;
+  label: string;
   source_id: string;
   source_name: string;
   chunk_count: number;

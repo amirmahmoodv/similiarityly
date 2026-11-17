@@ -129,8 +129,8 @@ def test_export_neutralizes_formulas(client):
         data={"input_kind": "text", "split": "lines", "text": "\n".join(lines)},
     ).json()
     res = client.get(f"{API}/jobs/{job['id']}/export.csv")
-    rows = list(csv.reader(io.StringIO(res.text.lstrip("﻿"))))[1:]
-    texts = {r[0]: r[4] for r in rows}
+    rows = list(csv.DictReader(io.StringIO(res.text.lstrip("﻿"))))
+    texts = {r["ordinal"]: r["text"] for r in rows}
     assert texts["1"].startswith("'=")
     assert texts["2"] == "'+1+1"
     assert texts["3"] == "'-2"

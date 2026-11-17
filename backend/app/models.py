@@ -77,6 +77,8 @@ class Record(Entity):
     source_id: str
     ordinal: int
     text: str
+    # From the load's label column (e.g. a row code); "" when none was chosen.
+    label: str = ""
     meta: dict = {}
     # Copy of the source's flag so "records in this repo" is a single filter.
     indexed: bool = False
@@ -86,6 +88,7 @@ class Record(Entity):
     max_score: float = 0.0
     match_count: int = 0
     best_match_text: str = ""
+    best_match_label: str = ""
 
 
 class Job(Entity):
@@ -134,6 +137,7 @@ class Match(Entity):
     matched_record_id: str
     matched_chunk_index: int
     matched_text: str
+    matched_label: str = ""
 
 
 ENTITIES: list[type[Entity]] = [Repo, Source, Record, Job, Match]

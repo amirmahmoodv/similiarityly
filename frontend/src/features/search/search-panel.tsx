@@ -9,6 +9,7 @@ import {
   EmptyState,
   ErrorNote,
   Field,
+  RecordLabel,
   ScoreMeter,
   Skeleton,
   StatusBadge,
@@ -174,7 +175,8 @@ export function SearchPanel({ repo }: { repo: Repo }) {
                     className="mb-2 rounded-xl border bg-card px-4 py-3"
                   >
                     <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
-                      <span className="text-xs text-muted-foreground">
+                      <span className="flex min-w-0 flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                        <RecordLabel label={hit.label} />
                         {hit.source_name || t.results.deletedSource}
                       </span>
                       <span className="flex items-center gap-3">

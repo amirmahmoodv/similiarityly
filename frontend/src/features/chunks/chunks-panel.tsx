@@ -22,6 +22,7 @@ import {
   EmptyState,
   ErrorNote,
   Field,
+  RecordLabel,
   Select,
   Skeleton,
   TextArea,
@@ -356,12 +357,15 @@ function RecordCard({
   return (
     <li className="rounded-xl border bg-card">
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 border-b bg-muted/60 px-4 py-2 text-xs text-muted-foreground">
-        <span className="min-w-0 break-words">
-          <span className="font-medium text-foreground">
-            {record.source_name || t.results.deletedSource}
+        <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 break-words">
+          <RecordLabel label={record.label} />
+          <span>
+            <span className="font-medium text-foreground">
+              {record.source_name || t.results.deletedSource}
+            </span>
+            <span aria-hidden="true"> · </span>
+            <span className="nums">{t.chunks.row(n(record.ordinal))}</span>
           </span>
-          <span aria-hidden="true"> · </span>
-          <span className="nums">{t.chunks.row(n(record.ordinal))}</span>
         </span>
         <span>
           <span className="nums">

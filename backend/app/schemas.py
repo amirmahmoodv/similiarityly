@@ -170,6 +170,7 @@ class RecordOut(BaseModel):
     id: str
     ordinal: int
     text: str
+    label: str = ""
     meta: dict
     chunk_count: int
     max_score: float
@@ -195,6 +196,7 @@ class MatchOut(ORM):
     matched_record_id: str
     matched_chunk_index: int
     matched_text: str
+    matched_label: str = ""
     matched_repo_name: str = ""
     matched_source_name: str = ""
 
@@ -247,6 +249,7 @@ class SearchHit(BaseModel):
     vector_score: float | None = None  # first-stage score, when a second stage ran
     text: str
     record_id: str
+    label: str = ""  # the chunk's record label, "" when its load had no label column
     chunk_index: int
     source_id: str
     source_name: str = ""
@@ -275,6 +278,7 @@ class RecordChunks(BaseModel):
 
     record_id: str
     ordinal: int
+    label: str = ""
     source_id: str
     source_name: str = ""
     chunk_count: int  # chunks stored for the record; `chunks` may be a prefix

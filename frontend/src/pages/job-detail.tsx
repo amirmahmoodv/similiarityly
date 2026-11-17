@@ -11,6 +11,7 @@ import {
   ErrorNote,
   LoadingPanel,
   PageHeader,
+  RecordLabel,
   ScoreMeter,
   Skeleton,
   StatusBadge,
@@ -101,9 +102,12 @@ function Matches({ record, summary }: { record: RecordItem; summary: JobSummary 
                 [t.results.thisChunk, m.chunk_text],
                 [t.results.matchedChunk, m.matched_text],
               ] as const
-            ).map(([label, text]) => (
+            ).map(([label, text], side) => (
               <div key={label} className="min-w-0">
-                <div className="mb-1 text-xs font-medium text-muted-foreground">{label}</div>
+                <div className="mb-1 flex flex-wrap items-center gap-2 text-xs font-medium text-muted-foreground">
+                  {label}
+                  <RecordLabel label={side === 0 ? record.label : m.matched_label} />
+                </div>
                 <p dir="auto" className="whitespace-pre-wrap break-words rounded-lg bg-muted/60 p-2.5">
                   {text}
                 </p>
@@ -127,9 +131,12 @@ function RecordRow({ record, summary }: { record: RecordItem; summary: JobSummar
     <li className="border-t first:border-t-0">
       <div className="grid grid-cols-[2.5rem_1fr] items-center gap-x-3 gap-y-2 px-4 py-3 md:grid-cols-[3rem_1fr_11rem_5.5rem_3.5rem]">
         <span className="nums text-sm text-muted-foreground">{n(record.ordinal)}</span>
-        <p dir="auto" className={cn("min-w-0 break-words text-sm", !open && "line-clamp-2")}>
-          {record.text}
-        </p>
+        <div className="min-w-0">
+          <RecordLabel label={record.label} className="mb-1" />
+          <p dir="auto" className={cn("break-words text-sm", !open && "line-clamp-2")}>
+            {record.text}
+          </p>
+        </div>
         <div className="col-start-2 flex items-center gap-3 md:col-start-auto">
           <ScoreMeter score={record.max_score} status={record.status} />
         </div>
