@@ -22,7 +22,20 @@ import type {
   Stats,
 } from "./types";
 
-const BASE = "/api/v1";
+declare global {
+  interface Window {
+    /** Set by /config.js, which the container writes from API_URL at start. */
+    __SIM_CONFIG__?: { apiUrl?: string };
+  }
+}
+
+/** "" = same origin (nginx or the Vite dev proxy forwards /api). */
+function apiOrigin(): string {
+  const url = typeof window === "undefined" ? "" : (window.__SIM_CONFIG__?.apiUrl ?? "");
+  return url.trim().replace(/\/+$/, "");
+}
+
+const BASE = `${apiOrigin()}/api/v1`;
 
 /** `code` is the backend's stable error code; the UI translates it. */
 export class ApiError extends Error {

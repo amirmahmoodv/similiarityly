@@ -1,9 +1,15 @@
+import json
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import model_validator
+from pydantic import field_validator, model_validator
 from pydantic.fields import FieldInfo
-from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
+from pydantic_settings import (
+    BaseSettings,
+    NoDecode,
+    PydanticBaseSettingsSource,
+    SettingsConfigDict,
+)
 
 # Connections are configured on the Settings page (saved to settings.json), never
 # through the environment: SIM_ variables for these fields are ignored on purpose.
@@ -78,7 +84,10 @@ class Settings(BaseSettings):
     llm_api_key: str | None = None
     llm_model: str = ""
 
-    cors_origins: list[str] = ["http://localhost:5173"]
+    # Browser origins allowed to call the API from another origin, e.g. the UI at
+    # https://sim.example.com calling https://api.sim.example.com. A JSON list or a
+    # comma-separated string. Not needed when the UI reaches the API under /api.
+    cors_origins: Annotated[list[str], NoDecode] = ["http://localhost:5173"]
     max_upload_mb: int = 50
 
     # Shared access token. When set, every /api/ request must carry
@@ -93,6 +102,15 @@ class Settings(BaseSettings):
     # Hits below this similarity are never stored, so thresholds can be tuned
     # after the fact for anything above it.
     match_store_floor: float = 0.3
+
+    @field_validator("cors_origins", mode="before")
+    @classmethod
+    def _parse_origins(cls, value):
+        if isinstance(value, str):
+            text = value.strip()
+            value = json.loads(text) if text.startswith("[") else text.split(",")
+        # A browser's Origin header never ends in "/", so "https://x/" would never match.
+        return [str(o).strip().rstrip("/") for o in value if str(o).strip()]
 
     @model_validator(mode="after")
     def _apply_default_qdrant(self):

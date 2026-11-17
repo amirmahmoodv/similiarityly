@@ -176,3 +176,48 @@ def test_default_qdrant_url_applies_until_a_qdrant_is_saved(monkeypatch, tmp_pat
     save_overrides(s, {"qdrant_url": None, "qdrant_api_key": None})
     s = apply_overrides(Settings(_env_file=None, data_dir=tmp_path))
     assert s.qdrant_url is None and s.qdrant_mode == "embedded"
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ('["https://sim.example.com/"]', ["https://sim.example.com"]),
+        (
+            "https://a.example.com, https://b.example.com",
+            ["https://a.example.com", "https://b.example.com"],
+        ),
+        ("", []),
+    ],
+)
+def test_cors_origins_accepts_json_or_comma_list(monkeypatch, tmp_path, raw, expected):
+    monkeypatch.setenv("SIM_CORS_ORIGINS", raw)
+    assert Settings(_env_file=None, data_dir=tmp_path).cors_origins == expected
+
+
+def test_cors_allows_the_configured_ui_origin(tmp_path):
+    s = Settings(
+        _env_file=None,
+        data_dir=tmp_path,
+        qdrant_in_memory=True,
+        api_token="tok",
+        cors_origins=["https://sim.example.com"],
+    )
+    with TestClient(create_app(s)) as c:
+        pre = c.options(
+            f"{API}/settings",
+            headers={
+                "Origin": "https://sim.example.com",
+                "Access-Control-Request-Method": "GET",
+                "Access-Control-Request-Headers": "authorization",
+            },
+        )
+        assert pre.status_code == 200
+        assert pre.headers["access-control-allow-origin"] == "https://sim.example.com"
+        res = c.get(
+            f"{API}/settings",
+            headers={"Origin": "https://sim.example.com", "Authorization": "Bearer tok"},
+        )
+        assert res.status_code == 200
+        assert res.headers["access-control-allow-origin"] == "https://sim.example.com"
+        other = c.get(f"{API}/settings", headers={"Origin": "https://evil.example.com"})
+        assert "access-control-allow-origin" not in other.headers

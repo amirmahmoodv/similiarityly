@@ -29,6 +29,26 @@ SIM_API_TOKEN=$(python -c "import secrets; print(secrets.token_urlsafe(32))") \
 WEB_BIND=0.0.0.0 docker compose up -d
 ```
 
+### UI and API on separate domains
+
+By default the browser calls the API under `/api` on the UI's own origin and the
+`web` container proxies it. To serve the API from its own domain instead, e.g.
+UI at `https://sim.example.com` and API at `https://api.sim.example.com`, set in
+`.env`:
+
+```bash
+API_URL=https://api.sim.example.com      # what the browser calls
+SIM_CORS_ORIGINS=https://sim.example.com # the UI's origin, allowed by the API
+SIM_API_TOKEN=...                         # required: the API is now public
+```
+
+Then point the UI domain at the `web` port (8080) and the API domain at the `api`
+port (8000), each behind your TLS reverse proxy. `API_URL` is applied when the
+`web` container starts (it writes `/config.js` and the CSP `connect-src`), so
+changing it needs only `docker compose up -d`, not a rebuild. Give the API
+proxy an upload limit and timeouts (e.g. `client_max_body_size 60m`,
+`proxy_read_timeout 300s` in nginx): uvicorn itself has no body-size limit.
+
 ## Local development
 
 Requirements: Python 3.11+, [uv](https://docs.astral.sh/uv/), Node.js 22+.
@@ -69,9 +89,10 @@ Only process-level settings stay in the environment — see
 | `SIM_API_TOKEN` | Shared access token. When set, every `/api/` call needs `Authorization: Bearer <token>`; the UI asks for it once. |
 | `SIM_DEFAULT_QDRANT_URL` | Qdrant server used until one is saved in Settings (compose sets it to the bundled service). Empty = embedded. |
 | `SIM_DATA_DIR` | Where runtime settings, embedded Qdrant files and downloaded models live. |
-| `SIM_CORS_ORIGINS` | JSON list of allowed browser origins when the UI is served from another origin. |
+| `SIM_CORS_ORIGINS` | Browser origins allowed to call the API from another origin (comma-separated or JSON list). Only for a separate API domain. |
 | `SIM_MAX_UPLOAD_MB` | Upload size limit (keep in step with `client_max_body_size` in `frontend/nginx.conf`). |
-| `WEB_BIND` / `WEB_PORT` / `API_PORT` / `QDRANT_PORT` | Docker host interface and ports. |
+| `API_URL` | Docker `web` service: public URL of the API when it has its own domain. Empty = `/api` on the UI's origin. |
+| `WEB_BIND` / `WEB_PORT` / `API_BIND` / `API_PORT` / `QDRANT_PORT` | Docker host interfaces and ports. |
 
 The old connection variables (`SIM_QDRANT_URL`, `SIM_QDRANT_API_KEY`,
 `SIM_OPENAI_*`, `SIM_LLM_*`) are **ignored**; set those values in Settings.

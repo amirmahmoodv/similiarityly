@@ -30,11 +30,15 @@ services:
       SIM_DEFAULT_QDRANT_URL: http://qdrant:6333
       # Strongly recommended whenever the web port is reachable from other machines.
       SIM_API_TOKEN: ${SIM_API_TOKEN:-}
+      # Only for a separate API domain: the UI's origin, e.g. https://sim.example.com.
+      SIM_CORS_ORIGINS: ${SIM_CORS_ORIGINS:-}
     volumes:
       # settings.json (connections saved from the UI) + downloaded embedding models
       - api_data:/data
     ports:
-      - "127.0.0.1:${API_PORT:-8000}:8000"
+      # Local-only by default. For a separate API domain, put a TLS reverse proxy in
+      # front of this port (or set API_BIND=0.0.0.0), and set SIM_API_TOKEN.
+      - "${API_BIND:-127.0.0.1}:${API_PORT:-8000}:8000"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 10s
@@ -44,6 +48,10 @@ services:
   web:
     build: ./frontend
     restart: unless-stopped
+    environment:
+      # Public URL of the API when it has its own domain (https://api.sim.example.com).
+      # Empty = the UI calls /api on its own origin, proxied to the api service.
+      API_URL: ${API_URL:-}
     depends_on:
       api:
         condition: service_healthy
