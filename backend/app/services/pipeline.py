@@ -6,6 +6,7 @@ record is written to Qdrant right after it has been scored.
 """
 
 import logging
+import time
 from dataclasses import dataclass
 
 import numpy as np
@@ -16,6 +17,7 @@ from app.schemas import RepoConfig, SimilarityConfig
 from app.services.chunking import chunk_text
 from app.services.embeddings import EmbeddingError, get_embedder
 from app.services.normalize import normalize
+from app.services.qdrant_http import storage_error_code
 from app.services.rerank import RerankError, get_reranker
 from app.services.vector_store import ChunkPoint, Hit, VectorConfigError, to_similarity
 
@@ -124,7 +126,7 @@ def job_error_code(exc: Exception) -> str:
         return "vector_config_mismatch"
     if isinstance(exc, RerankError):
         return "rerank_failed"
-    return "internal_error"
+    return storage_error_code(exc) or "internal_error"
 
 
 def _run(services: Services, job_id: str, body) -> None:
@@ -132,22 +134,32 @@ def _run(services: Services, job_id: str, body) -> None:
     job = meta.get(Job, job_id)
     if job is None:
         return
-    meta.patch(Job, job_id, status="running")
     try:
+        meta.patch(Job, job_id, status="running")
         body(job)
         status, error, detail = "done", None, None
     except Exception as exc:  # surfaced to the UI through the job
         log.exception("job %s failed", job_id)
         status, error = "failed", job_error_code(exc)
         detail = (getattr(exc, "detail", "") or str(exc) or type(exc).__name__)[:2000]
-    meta.patch(
-        Job,
-        job_id,
-        status=status,
-        error=error,
-        error_detail=detail,
-        finished_at=now().isoformat(),
-    )
+    fields = {
+        "status": status,
+        "error": error,
+        "error_detail": detail,
+        "finished_at": now().isoformat(),
+    }
+    # The outcome must land, or the job shows "running" until the next restart.
+    # The transport already retried once; a Qdrant that is briefly gone gets a
+    # few more seconds here.
+    for attempt in range(3):
+        try:
+            meta.patch(Job, job_id, **fields)
+            return
+        except Exception:
+            if attempt == 2:
+                log.exception("job %s: could not record its outcome (%s)", job_id, status)
+                return
+            time.sleep(2.0 * (attempt + 1))
 
 
 def run_ingest(services: Services, job_id: str) -> None:

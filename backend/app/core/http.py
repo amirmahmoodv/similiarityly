@@ -11,6 +11,8 @@ from starlette.datastructures import MutableHeaders
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from app.services.qdrant_http import storage_error_code
+
 log = logging.getLogger("similarityly")
 
 
@@ -21,6 +23,11 @@ class CatchErrorsMiddleware:
     the response has no CORS headers. A UI on another origin then cannot read
     it and only sees a network error. Answering here keeps the CORS headers and
     gives the UI a stable error code; the traceback goes to the log.
+
+    A Qdrant request that failed in transit (timeout, dropped connection) is
+    not a bug in the app: it answers 503 with `storage_timeout` or
+    `storage_unreachable`, so the UI can say "try again" instead of
+    "unexpected error".
     """
 
     def __init__(self, app: ASGIApp):
@@ -40,11 +47,26 @@ class CatchErrorsMiddleware:
 
         try:
             await self.app(scope, receive, tracking_send)
-        except Exception:
-            log.exception("unhandled error: %s %s", scope.get("method"), scope.get("path"))
+        except Exception as exc:
+            code = storage_error_code(exc)
+            if code is None:
+                log.exception("unhandled error: %s %s", scope.get("method"), scope.get("path"))
+            else:
+                log.error(
+                    "Qdrant request failed (%s): %s %s: %s",
+                    code,
+                    scope.get("method"),
+                    scope.get("path"),
+                    exc,
+                    exc_info=exc,
+                )
             if started:  # headers already sent; nothing better to do
                 raise
-            response = JSONResponse({"detail": "internal_error"}, status_code=500)
+            if code is None:
+                response = JSONResponse({"detail": "internal_error"}, status_code=500)
+            else:
+                body = {"detail": {"code": code, "message": str(exc)[:500]}}
+                response = JSONResponse(body, status_code=503)
             await response(scope, receive, send)
 
 

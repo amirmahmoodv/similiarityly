@@ -7,7 +7,9 @@
 """
 
 import importlib.util
+import logging
 import threading
+import time
 import zlib
 from pathlib import Path
 from typing import Protocol
@@ -17,6 +19,8 @@ import numpy as np
 
 from app.core.config import Settings
 from app.schemas import EmbeddingConfig, ProviderInfo
+
+log = logging.getLogger("similarityly")
 
 SUGGESTED_MODELS: dict[str, list[str]] = {
     "fastembed": [
@@ -105,6 +109,17 @@ class FastEmbedEmbedder:
             raise EmbeddingError("embedding_failed", str(exc)) from exc
 
 
+# Embedding a batch can take a while on a CPU-bound server, but connecting or
+# sending the request body should not: a stall there is a dead connection.
+_TIMEOUT = httpx.Timeout(120.0, connect=10.0, write=30.0)
+# Failures where the connection, not the request, is the likely culprit. An
+# embedding request has no side effects, so sending it again is always safe.
+_TRANSIENT_ERRORS = (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError)
+# Answers from an overloaded server or a proxy in front of it.
+_TRANSIENT_STATUS = {429, 502, 503, 504}
+_RETRY_DELAY = 1.0
+
+
 class OpenAIEmbedder:
     def __init__(self, model: str, batch_size: int, settings: Settings):
         self._model = model
@@ -112,16 +127,41 @@ class OpenAIEmbedder:
         headers = {}
         if settings.openai_api_key:
             headers["Authorization"] = f"Bearer {settings.openai_api_key}"
-        self._client = httpx.Client(
-            base_url=settings.openai_base_url.rstrip("/"), headers=headers, timeout=120
-        )
+        self._client_args = {
+            "base_url": settings.openai_base_url.rstrip("/"),
+            "headers": headers,
+            "timeout": _TIMEOUT,
+        }
+        self._client = self._new_client()
+
+    def _new_client(self) -> httpx.Client:
+        return httpx.Client(**self._client_args)
+
+    def _post(self, batch: list[str]) -> httpx.Response:
+        """POST one batch; on a stalled or broken connection, or a 429/5xx from a
+        proxy, try once more on a brand-new connection. The retry uses its own
+        short-lived client: the shared one may be in use by another thread."""
+        payload = {"model": self._model, "input": batch}
+        try:
+            res = self._client.post("/embeddings", json=payload)
+            if res.status_code not in _TRANSIENT_STATUS:
+                return res
+            reason = f"HTTP {res.status_code}"
+        except _TRANSIENT_ERRORS as exc:
+            reason = type(exc).__name__
+        log.warning("embedding request failed (%s); retrying on a new connection", reason)
+        time.sleep(_RETRY_DELAY)
+        with self._new_client() as fresh:
+            res = fresh.post("/embeddings", json=payload)
+            res.read()
+            return res
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         vectors: list[list[float]] = []
         for i in range(0, len(texts), self._batch_size):
             batch = texts[i : i + self._batch_size]
             try:
-                res = self._client.post("/embeddings", json={"model": self._model, "input": batch})
+                res = self._post(batch)
                 res.raise_for_status()
             except httpx.HTTPStatusError as exc:
                 auth = exc.response.status_code in (401, 403)

@@ -87,13 +87,121 @@ def test_a_read_that_fails_twice_raises(monkeypatch):
     assert len(calls) == 2
 
 
-@pytest.mark.parametrize("method", ["PUT", "POST", "PATCH", "DELETE"])
-def test_writes_are_never_retried(monkeypatch, method):
-    """Creating a collection twice is an error, so a write fails as it is."""
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("PUT", "/collections/x"),  # create collection
+        ("DELETE", "/collections/x"),
+        ("PUT", "/collections/x/index"),  # create payload index
+        ("PATCH", "/collections/x"),
+        ("POST", "/collections/aliases"),
+    ],
+)
+def test_collection_writes_are_never_retried(monkeypatch, method, path):
+    """Creating a collection twice is an error, so such a write fails as it is."""
     transport, calls, _ = _transport(monkeypatch, [httpx.ReadTimeout, 200])
     with pytest.raises(httpx.ReadTimeout):
-        _client(transport).request(method, "/collections/x", json={})
+        _client(transport).request(method, path, json={})
     assert calls == [(method, 60)]  # one attempt, full timeout
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "kind"),
+    [
+        ("GET", "/collections/x/exists", "read"),
+        ("POST", "/collections/x/points", "read"),  # retrieve by ids
+        ("POST", "/collections/x/points/scroll", "read"),
+        ("POST", "/collections/x/points/count", "read"),
+        ("POST", "/collections/x/points/query", "read"),
+        ("POST", "/collections/x/points/query/batch", "read"),
+        ("POST", "/collections/x/facet", "read"),
+        ("PUT", "/collections/x/points", "point_write"),  # upsert
+        ("POST", "/collections/x/points/delete", "point_write"),
+        ("POST", "/collections/x/points/payload", "point_write"),
+        ("POST", "/collections/x/points/batch", "point_write"),
+        ("PUT", "/prefix/collections/x/points", "point_write"),  # URL with a path prefix
+        ("PUT", "/collections/x", "other"),
+        ("PUT", "/collections/x/index", "other"),
+        ("DELETE", "/collections/x", "other"),
+    ],
+)
+def test_request_kind(method, path, kind):
+    assert qdrant_http.request_kind(method, path) == kind
+
+
+@pytest.mark.parametrize("error", [httpx.WriteTimeout, httpx.ReadTimeout, httpx.WriteError])
+def test_stalled_upsert_is_retried_on_a_new_connection(monkeypatch, error):
+    """The production failure: a large upsert body stopped being accepted."""
+    transport, calls, made = _transport(monkeypatch, [error, 200])
+    res = _client(transport).put("/collections/sim_meta_records/points?wait=true", json={})
+    assert res.status_code == 200
+    # First attempt capped, the retry gets the full configured timeout.
+    assert calls == [
+        ("PUT", qdrant_http.FIRST_WRITE_ANSWER_TIMEOUT),
+        ("PUT", 60),
+    ]
+    assert made[0].closed and transport.keepalive_disabled
+
+
+def test_post_reads_are_retried_with_read_caps(monkeypatch):
+    transport, calls, _ = _transport(monkeypatch, [httpx.ReadTimeout, 200])
+    res = _client(transport).post("/collections/x/points/scroll", json={})
+    assert res.status_code == 200
+    assert calls == [("POST", FIRST_READ_ATTEMPT_TIMEOUT), ("POST", RETRY_READ_TIMEOUT)]
+
+
+def test_an_upsert_that_fails_twice_raises(monkeypatch):
+    transport, calls, _ = _transport(monkeypatch, [httpx.WriteTimeout, httpx.WriteTimeout])
+    with pytest.raises(httpx.WriteTimeout):
+        _client(transport).put("/collections/x/points", json={})
+    assert len(calls) == 2
+
+
+def test_first_attempt_caps_the_write_timeout(monkeypatch):
+    seen = []
+
+    class Recording(httpx.BaseTransport):
+        def handle_request(self, request):
+            seen.append(request.extensions["timeout"]["write"])
+            return httpx.Response(200, json={})
+
+    monkeypatch.setattr(ResilientTransport, "_new_transport", lambda self: Recording())
+    _client(ResilientTransport("q.example.com")).put("/collections/x/points", json={})
+    assert seen == [qdrant_http.FIRST_WRITE_ATTEMPT_TIMEOUT]
+
+
+def test_batched_splits_by_count_and_size():
+    sizes = [1, 1, 1, 5, 1, 9, 1]
+    batches = list(qdrant_http.batched(sizes, lambda n: n, max_items=3, max_bytes=6))
+    # An item over the byte cap still goes, alone in its batch.
+    assert batches == [[1, 1, 1], [5, 1], [9], [1]]
+    assert list(qdrant_http.batched([], lambda n: n, 3)) == []
+
+
+def test_storage_error_code():
+    from qdrant_client.http.exceptions import ResponseHandlingException
+
+    def wrapped(inner):
+        try:
+            try:
+                raise inner
+            except Exception as exc:
+                raise ResponseHandlingException(exc) from exc
+        except Exception as outer:
+            return outer
+
+    req = httpx.Request("PUT", "https://q.example.com/collections/x/points")
+    assert (
+        qdrant_http.storage_error_code(wrapped(httpx.WriteTimeout("t", request=req)))
+        == "storage_timeout"
+    )
+    assert (
+        qdrant_http.storage_error_code(wrapped(httpx.ConnectError("refused", request=req)))
+        == "storage_unreachable"
+    )
+    # A timeout outside qdrant-client (e.g. the embedding service) is not a storage error.
+    assert qdrant_http.storage_error_code(httpx.ReadTimeout("t", request=req)) is None
+    assert qdrant_http.storage_error_code(ValueError("x")) is None
 
 
 def test_short_reads_keep_their_own_timeout(monkeypatch):

@@ -101,10 +101,55 @@ def test_self_hosted_endpoint_needs_no_key_but_reports_unreachable(client):
 def _openai(handler) -> OpenAIEmbedder:
     s = Settings(_env_file=None, openai_api_key="k")
     emb = OpenAIEmbedder("m", 8, s)
-    emb._client = httpx.Client(
+    emb._new_client = lambda: httpx.Client(  # the retry's fresh connection too
         base_url="http://emb.test/v1", transport=httpx.MockTransport(handler)
     )
+    emb._client = emb._new_client()
     return emb
+
+
+@pytest.fixture(autouse=True)
+def _no_retry_delay(monkeypatch):
+    from app.services import embeddings
+
+    monkeypatch.setattr(embeddings, "_RETRY_DELAY", 0)
+
+
+@pytest.mark.parametrize(
+    "first",
+    [
+        httpx.ReadTimeout,
+        httpx.WriteTimeout,
+        httpx.RemoteProtocolError,
+        httpx.Response(502, text="bad gateway"),
+        httpx.Response(429, text="slow down"),
+    ],
+)
+def test_openai_embedder_retries_once_on_a_new_connection(first):
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        if len(calls) == 1:
+            if isinstance(first, httpx.Response):
+                return first
+            raise first("stalled", request=request)
+        return httpx.Response(200, json={"data": [{"index": 0, "embedding": [1.0, 0.0]}]})
+
+    assert _openai(handler).embed(["x"]) == [[1.0, 0.0]]
+    assert len(calls) == 2
+
+
+def test_openai_embedder_gives_up_after_one_retry():
+    calls = []
+
+    def handler(request):
+        calls.append(request)
+        return httpx.Response(503, text="down")
+
+    with pytest.raises(EmbeddingError) as info:
+        _openai(handler).embed(["x"])
+    assert info.value.code == "embedding_failed" and len(calls) == 2
 
 
 @pytest.mark.parametrize(

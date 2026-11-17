@@ -10,7 +10,7 @@ from qdrant_client import QdrantClient
 from qdrant_client import models as qm
 
 from app.core.config import Settings
-from app.services.qdrant_http import ResilientTransport, prefer_ipv4_loopback
+from app.services.qdrant_http import ResilientTransport, batched, prefer_ipv4_loopback
 
 _DISTANCE = {
     "cosine": qm.Distance.COSINE,
@@ -21,6 +21,13 @@ _DISTANCE_NAME = {v: k for k, v in _DISTANCE.items()}
 
 # Payload fields that are filtered on (source deletion, search scoping).
 _PAYLOAD_INDEXES = ("source_id", "record_id")
+_UPSERT_BATCH = 256
+
+
+def _point_bytes(point: qm.PointStruct) -> int:
+    """Rough JSON size: the text, plus ~22 characters per float of the vector."""
+    vector = point.vector if isinstance(point.vector, list) else []
+    return len(point.payload["text"].encode()) + 22 * len(vector) + 200
 
 
 def server_client(url: str, api_key: str | None, **kwargs: Any) -> QdrantClient:
@@ -201,8 +208,10 @@ class VectorStore:
             )
             for p in points
         ]
-        with self._lock:
-            self._client.upsert(self._name(repo_id), points=structs, wait=True)
+        # A long document yields many chunks; keep each request small.
+        for batch in batched(structs, _point_bytes, _UPSERT_BATCH):
+            with self._lock:
+                self._client.upsert(self._name(repo_id), points=batch, wait=True)
 
     def search_batch(self, repo_id: str, vectors: list[list[float]], limit: int) -> list[list[Hit]]:
         if not vectors:

@@ -412,6 +412,10 @@ export const en: Dictionary = {
     network_error: "Could not reach the server.",
     unknown_error: "An unknown error occurred.",
     internal_error: "The server hit an unexpected error; details are in the API log.",
+    storage_timeout:
+      "The database (Qdrant) did not answer in time, even after a retry on a new connection. Nothing was saved; try again.",
+    storage_unreachable:
+      "The connection to the database (Qdrant) failed, even after a retry. Nothing was saved; try again.",
     validation_error: "The values entered are not valid.",
     repo_not_found: "Repository not found.",
     repo_name_taken: "A repository with this name already exists.",

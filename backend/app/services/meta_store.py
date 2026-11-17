@@ -5,6 +5,7 @@ with an empty vectors config). Points are addressed by the entity id; filters
 and ordering run on payload indexes declared on each entity class.
 """
 
+import json
 import logging
 import threading
 from collections.abc import Iterable
@@ -12,8 +13,10 @@ from typing import Any, TypeVar
 
 from qdrant_client import QdrantClient
 from qdrant_client import models as qm
+from qdrant_client.http.exceptions import UnexpectedResponse
 
 from app.models import ENTITIES, Entity
+from app.services.qdrant_http import batched
 
 log = logging.getLogger("similarityly")
 
@@ -41,6 +44,10 @@ def build_filter(where: Where | None = None, ranges: Ranges | None = None) -> qm
     for key, bounds in (ranges or {}).items():
         must.append(qm.FieldCondition(key=key, range=qm.Range(**bounds)))
     return qm.Filter(must=must) if must else None
+
+
+def _payload_bytes(point: qm.PointStruct) -> int:
+    return len(json.dumps(point.payload, ensure_ascii=False).encode()) + 64
 
 
 class MetaStore:
@@ -81,13 +88,13 @@ class MetaStore:
         if not objs:
             return
         name = self._name(type(objs[0]))
-        for i in range(0, len(objs), _BATCH):
-            points = [
-                qm.PointStruct(id=o.id, vector={}, payload=o.model_dump(mode="json"))
-                for o in objs[i : i + _BATCH]
-            ]
+        points = [
+            qm.PointStruct(id=o.id, vector={}, payload=o.model_dump(mode="json")) for o in objs
+        ]
+        # Batched by size as well as count: one record can hold a whole document.
+        for batch in batched(points, _payload_bytes, _BATCH):
             with self._lock:
-                self._client.upsert(name, points=points, wait=True)
+                self._client.upsert(name, points=batch, wait=True)
 
     def patch(self, entity: type[E], id: str, **fields: Any) -> None:
         with self._lock:
@@ -115,7 +122,13 @@ class MetaStore:
         try:
             with self._lock:
                 points = self._client.retrieve(self._name(entity), ids=[id], with_payload=True)
-        except Exception:  # malformed id from a URL: treat as "not found"
+        except (ValueError, UnexpectedResponse) as exc:
+            # A malformed id from a URL (rejected by the server with a 4xx, or
+            # by the embedded client): treat as "not found". Anything else, a
+            # timeout above all, is raised: answering 404 for an entity that
+            # exists would be wrong, and the UI would drop it.
+            if isinstance(exc, UnexpectedResponse) and exc.status_code not in (400, 404, 422):
+                raise
             return None
         return entity.model_validate(points[0].payload) if points else None
 

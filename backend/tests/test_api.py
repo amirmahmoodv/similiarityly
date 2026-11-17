@@ -461,3 +461,75 @@ def test_legacy_sqlite_is_imported_once(tmp_path):
         assert match["matched_text"] == "الف" and match["matched_source_name"] == "منبع"
         assert "الف" in c.get(f"{API}/jobs/{j}/export.csv").text
     assert not db.exists() and (tmp_path / "similarityly.db.migrated").exists()
+
+
+def _qdrant_timeout():
+    """What qdrant-client raises when a request stalls past the transport's retry."""
+    import httpx
+    from qdrant_client.http.exceptions import ResponseHandlingException
+
+    req = httpx.Request("PUT", "https://q.example.com/collections/x/points")
+    try:
+        raise httpx.WriteTimeout("The write operation timed out", request=req)
+    except httpx.WriteTimeout as exc:
+        return ResponseHandlingException(exc)
+
+
+def test_failed_ingest_write_leaves_no_partial_source(client, monkeypatch):
+    """A Qdrant timeout while saving the records: 503 with a stable code, and
+    the source saved just before is removed again."""
+    from app.models import Record, Source
+
+    repo = make_repo(client)
+    services = client.app.state.services
+    real_put_many = services.meta.put_many
+
+    def put_many(objs):
+        objs = list(objs)
+        if objs and isinstance(objs[0], Record):
+            raise _qdrant_timeout()
+        return real_put_many(objs)
+
+    monkeypatch.setattr(services.meta, "put_many", put_many)
+    res = client.post(
+        f"{API}/repos/{repo['id']}/ingest",
+        data={"input_kind": "text", "split": "whole", "text": "یک سند کامل"},
+    )
+    assert res.status_code == 503, res.text
+    assert res.json()["detail"]["code"] == "storage_timeout"
+    assert services.meta.all(Source, {"repo_id": repo["id"]}) == []
+    assert client.get(f"{API}/repos/{repo['id']}/sources").json() == []
+
+
+def test_a_qdrant_timeout_is_not_reported_as_not_found(client, monkeypatch):
+    """`get` used to swallow every error as "not found": a stalled read then
+    answered 404 for a repository that exists."""
+    repo = make_repo(client)
+    services = client.app.state.services
+
+    def stalled(*args, **kwargs):
+        raise _qdrant_timeout()
+
+    monkeypatch.setattr(services.client, "retrieve", stalled)
+    res = client.get(f"{API}/repos/{repo['id']}")
+    assert res.status_code == 503
+    assert res.json()["detail"]["code"] == "storage_timeout"
+
+
+def test_large_documents_are_stored_in_size_bounded_requests(client, monkeypatch):
+    from app.services import qdrant_http
+
+    sizes = []
+    services = client.app.state.services
+    real_upsert = services.client.upsert
+
+    def upsert(name, points, **kwargs):
+        sizes.append(len(points))
+        return real_upsert(name, points=points, **kwargs)
+
+    monkeypatch.setattr(services.client, "upsert", upsert)
+    monkeypatch.setattr(qdrant_http, "MAX_REQUEST_BYTES", 2_000)
+    repo = make_repo(client)
+    sizes.clear()
+    ingest_lines(client, repo["id"], [f"line {i} " + "x" * 300 for i in range(20)])
+    assert max(sizes) < 20  # 20 records of ~300 bytes never go in one request
