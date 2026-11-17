@@ -69,7 +69,7 @@ def captured(monkeypatch):
         calls.append((base_url, api_key))
         return ConnectionTest(ok=True)
 
-    def fake_qdrant(url, api_key, prefix="sim_"):
+    def fake_qdrant(url, api_key, prefix="sim_", tcp_mss=None):
         calls.append((url, api_key))
         return ConnectionTest(ok=True)
 

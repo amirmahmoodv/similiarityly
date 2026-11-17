@@ -76,6 +76,9 @@ class Settings(BaseSettings):
     # too short for a remote server: switching to one creates collections and
     # waits for payload indexes, and each of those calls can take longer.
     qdrant_timeout: int = Field(60, ge=1, le=600)
+    # TCP segment size for a remote Qdrant: small enough to cross a path that
+    # drops full-size packets (large uploads stalled on one). 0 = OS default.
+    qdrant_tcp_mss: int = Field(1200, ge=0, le=1460)
     collection_prefix: str = "sim_"
 
     openai_base_url: str = "https://api.openai.com/v1"

@@ -9,8 +9,11 @@ import time
 
 import anthropic
 import httpx
+from qdrant_client import models as qm
+from qdrant_client.http.exceptions import UnexpectedResponse
 
 from app.schemas import ConnectionStep, ConnectionTest
+from app.services.qdrant_http import DEFAULT_TCP_MSS
 from app.services.vector_store import server_client
 
 OPENAI_DEFAULT_BASE_URL = "https://api.openai.com/v1"
@@ -21,7 +24,30 @@ def _ms(start: float) -> int:
     return round((time.perf_counter() - start) * 1000)
 
 
-QDRANT_STEPS = ("version", "list_collections", "collection_lookup", "new_connection_lookup")
+QDRANT_STEPS = (
+    "version",
+    "list_collections",
+    "collection_lookup",
+    "new_connection_lookup",
+    "large_request",
+)
+# Body size of the large_request step: about what one batch of records sends.
+LARGE_REQUEST_BYTES = 512 * 1024
+
+
+def _large_count(client, collection: str) -> None:
+    """A read-only count whose filter pads the body to LARGE_REQUEST_BYTES.
+
+    Uploads of a whole document stalled while every small request worked, so
+    the path is checked with a body of realistic size. Any answer from the
+    server, a 404 for a collection not created yet included, proves the body
+    got through."""
+    ids = [f"probe{i:027d}" for i in range(LARGE_REQUEST_BYTES // 36)]
+    flt = qm.Filter(must=[qm.FieldCondition(key="source_id", match=qm.MatchAny(any=ids))])
+    try:
+        client.count(collection, count_filter=flt, exact=False)
+    except UnexpectedResponse:
+        pass
 
 
 def _is_timeout(exc: BaseException) -> bool:
@@ -49,7 +75,9 @@ def _client_version() -> str | None:
         return None
 
 
-def test_qdrant(url: str, api_key: str | None, prefix: str = "sim_") -> ConnectionTest:
+def test_qdrant(
+    url: str, api_key: str | None, prefix: str = "sim_", tcp_mss: int = DEFAULT_TCP_MSS
+) -> ConnectionTest:
     """Run the same requests switching to this server makes, each timed.
 
     Saving connects with a version check and then looks up and creates
@@ -57,7 +85,8 @@ def test_qdrant(url: str, api_key: str | None, prefix: str = "sim_") -> Connecti
     let a server pass here and then hang on save, so every step is repeated:
     the version, a listing, a collection lookup on the same connection, and the
     same lookup on a brand-new connection (which tells a broken keep-alive path
-    apart from a server that does not answer at all). Nothing is written.
+    apart from a server that does not answer at all), and a request with a large
+    body (which catches a path that drops full-size packets). Nothing is written.
     """
     start = time.perf_counter()
     steps: list[ConnectionStep] = []
@@ -81,8 +110,15 @@ def test_qdrant(url: str, api_key: str | None, prefix: str = "sim_") -> Connecti
 
     clients = []
     try:
-        client = server_client(url, api_key, timeout=int(_TIMEOUT), check_compatibility=False)
-        clients.append(client)
+
+        def make():
+            c = server_client(
+                url, api_key, timeout=int(_TIMEOUT), check_compatibility=False, tcp_mss=tcp_mss
+            )
+            clients.append(c)
+            return c
+
+        client = make()
         info = run("version", client.info)
         version = getattr(info, "version", None)
         listed = run("list_collections", client.get_collections)
@@ -92,9 +128,10 @@ def test_qdrant(url: str, api_key: str | None, prefix: str = "sim_") -> Connecti
         # breaks. A refused connection or a rejected key would just repeat itself.
         if first_failure is None or _is_timeout(first_failure[2]):
             run("collection_lookup", lambda: client.collection_exists(lookup))
-            fresh = server_client(url, api_key, timeout=int(_TIMEOUT), check_compatibility=False)
-            clients.append(fresh)
+            fresh = make()
             run("new_connection_lookup", lambda: fresh.collection_exists(lookup))
+            if first_failure is None:  # only meaningful when small requests work
+                run("large_request", lambda: _large_count(make(), lookup))
     except Exception as exc:  # e.g. an invalid URL: the client cannot even be built
         first_failure = first_failure or ("client", str(exc), exc)
     finally:
@@ -113,6 +150,8 @@ def test_qdrant(url: str, api_key: str | None, prefix: str = "sim_") -> Connecti
     name, text, exc = first_failure
     if _is_auth(exc):
         code = "qdrant_auth_failed"
+    elif name == "large_request":
+        code = "qdrant_large_request_failed"
     elif _is_timeout(exc):
         code = "qdrant_timeout"
     else:

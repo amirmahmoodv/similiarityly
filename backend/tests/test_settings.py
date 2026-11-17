@@ -332,6 +332,11 @@ class _FakeQdrant:
         assert name == "sim_meta_repos"
         return self._call("collection_exists", False)
 
+    def count(self, name, count_filter=None, exact=True):
+        import types
+
+        return self._call("count", types.SimpleNamespace(count=0))
+
     def close(self):
         self.closed = True
 
@@ -347,7 +352,7 @@ def _patch_clients(monkeypatch, *clients):
 def test_qdrant_check_runs_every_step_of_a_save(monkeypatch):
     from app.services.connections import QDRANT_STEPS, test_qdrant
 
-    _patch_clients(monkeypatch, _FakeQdrant(), _FakeQdrant())
+    _patch_clients(monkeypatch, _FakeQdrant(), _FakeQdrant(), _FakeQdrant())
     result = test_qdrant("https://q.example.com", "k")
     assert result.ok and result.version == "1.12.5" and result.collections == 3
     assert [s.name for s in result.steps] == list(QDRANT_STEPS)
@@ -385,6 +390,18 @@ def test_qdrant_check_tells_keep_alive_problems_apart(monkeypatch):
     status = {s.name: s.ok for s in result.steps}
     assert status["collection_lookup"] is False and status["new_connection_lookup"] is True
     assert result.error == "qdrant_timeout"
+
+
+def test_qdrant_check_catches_a_path_that_stalls_large_bodies(monkeypatch):
+    """Small requests answer, a body of batch size never gets through: the
+    production failure behind the stalled whole-document upload."""
+    from app.services.connections import test_qdrant
+
+    _patch_clients(monkeypatch, _FakeQdrant(), _FakeQdrant(), _FakeQdrant(hang={"count"}))
+    result = test_qdrant("https://q.example.com", "k")
+    assert not result.ok and result.error == "qdrant_large_request_failed"
+    status = {s.name: s.ok for s in result.steps}
+    assert status["new_connection_lookup"] is True and status["large_request"] is False
 
 
 def test_qdrant_check_stops_after_a_rejected_key(monkeypatch):

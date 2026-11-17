@@ -10,7 +10,12 @@ from qdrant_client import QdrantClient
 from qdrant_client import models as qm
 
 from app.core.config import Settings
-from app.services.qdrant_http import ResilientTransport, batched, prefer_ipv4_loopback
+from app.services.qdrant_http import (
+    DEFAULT_TCP_MSS,
+    ResilientTransport,
+    batched,
+    prefer_ipv4_loopback,
+)
 
 _DISTANCE = {
     "cosine": qm.Distance.COSINE,
@@ -43,7 +48,8 @@ def server_client(url: str, api_key: str | None, **kwargs: Any) -> QdrantClient:
     url = prefer_ipv4_loopback(url.strip().rstrip("/"))
     parts = urlsplit(url)
     port = parts.port or (443 if parts.scheme == "https" else 80)
-    kwargs.setdefault("transport", ResilientTransport(parts.hostname or ""))
+    tcp_mss = kwargs.pop("tcp_mss", DEFAULT_TCP_MSS)
+    kwargs.setdefault("transport", ResilientTransport(parts.hostname or "", tcp_mss))
     return QdrantClient(url=url, port=port, api_key=api_key or None, **kwargs)
 
 
@@ -56,6 +62,7 @@ def connect(settings: Settings) -> tuple[QdrantClient, str]:
             settings.qdrant_url,
             settings.qdrant_api_key,
             timeout=settings.qdrant_timeout,
+            tcp_mss=settings.qdrant_tcp_mss,
             # Built exactly like the connection test's client. The default check
             # opens a second connection from a background thread at the same time
             # as the first real request, which is where a save to a remote server

@@ -246,6 +246,10 @@ def test_qdrant_check_survives_one_stalled_lookup(monkeypatch):
             return httpx.Response(200, json={"title": "qdrant", "version": "1.12.5"})
         if request.url.path == "/collections":
             return httpx.Response(200, json={"result": {"collections": []}, "status": "ok"})
+        if request.url.path.endswith("/points/count"):
+            # The large_request step: its whole padded body arrived.
+            assert len(request.content) > 500_000
+            return httpx.Response(404, json={"status": {"error": "Not found"}})
         return httpx.Response(200, json={"result": {"exists": False}, "status": "ok"})
 
     monkeypatch.setattr(
@@ -285,3 +289,75 @@ def test_keep_alive_is_turned_off_after_the_first_stall(monkeypatch, caplog):
     assert "from now on" not in caplog.text
     monkeypatch.setattr(inner_cls, "handle_request", real_handle)
     transport.close()
+
+
+@pytest.mark.parametrize(
+    ("platform", "host", "mss", "expected"),
+    [
+        ("linux", "qdrant.example.com", 1200, 1200),
+        ("linux", "qdrant.example.com", 0, None),  # turned off
+        ("linux", "127.0.0.1", 1200, None),  # loopback has no path to break
+        ("win32", "qdrant.example.com", 1200, None),  # not honoured before connect
+    ],
+)
+def test_segment_size_is_clamped_for_remote_hosts(monkeypatch, platform, host, mss, expected):
+    """Large uploads stalled even on new connections (a path that drops
+    full-size packets); smaller segments get through such a path."""
+    import socket
+
+    monkeypatch.setattr(qdrant_http.sys, "platform", platform)
+    monkeypatch.setattr(socket, "TCP_MAXSEG", 2, raising=False)
+    transport = ResilientTransport(host, tcp_mss=mss)
+    try:
+        backend = transport._transport._pool._network_backend
+        if expected is None:
+            assert not isinstance(backend, qdrant_http.ClampedSegmentBackend)
+        else:
+            assert backend.mss == expected
+    finally:
+        transport.close()
+
+
+def test_clamped_backend_sets_the_segment_size_before_connecting(monkeypatch):
+    import socket
+
+    events = []
+
+    class FakeSocket:
+        def __init__(self, *args):
+            pass
+
+        def setsockopt(self, level, name, value):
+            events.append(("opt", name, value))
+
+        def settimeout(self, t):
+            pass
+
+        def connect(self, address):
+            events.append(("connect", address))
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(socket, "TCP_MAXSEG", 2, raising=False)
+    monkeypatch.setattr(
+        socket,
+        "getaddrinfo",
+        lambda *a, **kw: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.0.0.1", 443))],
+    )
+    monkeypatch.setattr(socket, "socket", FakeSocket)
+    qdrant_http.ClampedSegmentBackend(1200).connect_tcp("q.example.com", 443, timeout=5)
+    assert events[0] == ("opt", 2, 1200)
+    assert events.index(("connect", ("10.0.0.1", 443))) > 0
+
+
+def test_server_client_passes_the_segment_size(monkeypatch):
+    from app.services.vector_store import server_client
+
+    monkeypatch.setattr(qdrant_http.sys, "platform", "linux")
+    client = server_client("https://q.example.com", None, check_compatibility=False, tcp_mss=1000)
+    try:
+        transport = client._client.openapi_client.client._client._transport
+        assert transport.tcp_mss == 1000
+    finally:
+        client.close()

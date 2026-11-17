@@ -112,6 +112,7 @@ def check_qdrant(body: QdrantSettingsIn, services: Services = Depends(get_servic
         body.url,
         _key(body.api_key, s.qdrant_api_key, _same_qdrant(body.url, s)),
         s.collection_prefix,
+        s.qdrant_tcp_mss,
     )
 
 
@@ -128,7 +129,9 @@ async def update_qdrant(
     }
     # Refuse to save a server we cannot reach: the app would come up without storage.
     if body.mode == "server":
-        result = await run_in_threadpool(test_qdrant, body.url, api_key, current.collection_prefix)
+        result = await run_in_threadpool(
+            test_qdrant, body.url, api_key, current.collection_prefix, current.qdrant_tcp_mss
+        )
         if not result.ok:
             raise _failure(502, result.error or "qdrant_unreachable", result.detail)
 

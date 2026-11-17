@@ -23,15 +23,27 @@ Two problems seen in practice:
 
   Collection-level writes (create/delete a collection, create an index) are
   never retried: creating a collection twice is an error.
+
+* Large bodies stalled even on a brand-new connection, while small requests
+  on the same path worked: the signature of a path MTU black hole (an overlay
+  network or tunnel that silently drops full-size packets). Connections to a
+  remote Qdrant therefore use a smaller TCP segment size (TCP_MAXSEG, set
+  before connecting). That also lowers the size advertised to the server, so
+  its answers come in small packets too. It costs a few percent of throughput.
 """
 
 import logging
 import re
+import socket
+import sys
 from collections.abc import Callable, Iterator, Sequence
 from typing import TypeVar
 from urllib.parse import urlsplit, urlunsplit
 
+import httpcore
 import httpx
+from httpcore._backends.sync import SyncStream
+from httpcore._exceptions import map_exceptions
 from qdrant_client.http.exceptions import ResponseHandlingException
 
 log = logging.getLogger("similarityly")
@@ -60,6 +72,58 @@ FIRST_WRITE_ATTEMPT_TIMEOUT = 15.0
 # change is in its log, not after indexing, so this is generous; the retry
 # gets the full configured timeout.
 FIRST_WRITE_ANSWER_TIMEOUT = 30.0
+# Fits a 1280-byte path, the IPv6 minimum MTU, so it survives any tunnel or
+# overlay; a normal path carries 1460. 0 turns the clamp off (SIM_QDRANT_TCP_MSS).
+DEFAULT_TCP_MSS = 1200
+
+
+def _clamp_supported() -> bool:
+    # Linux (what the image runs) honours TCP_MAXSEG set before connect.
+    return sys.platform.startswith("linux") and hasattr(socket, "TCP_MAXSEG")
+
+
+class ClampedSegmentBackend(httpcore.SyncBackend):
+    """httpcore's TCP connect, with TCP_MAXSEG set *before* connecting.
+
+    httpx's `socket_options` are applied after connect(), too late to change
+    the segment size announced to the server in the handshake.
+    """
+
+    def __init__(self, mss: int):
+        self.mss = mss
+
+    def connect_tcp(
+        self,
+        host: str,
+        port: int,
+        timeout: float | None = None,
+        local_address: str | None = None,
+        socket_options=None,
+    ) -> httpcore.NetworkStream:
+        exc_map = {socket.timeout: httpcore.ConnectTimeout, OSError: httpcore.ConnectError}
+        with map_exceptions(exc_map):
+            last: OSError | None = None
+            for family, kind, proto, _, address in socket.getaddrinfo(
+                host, port, type=socket.SOCK_STREAM
+            ):
+                sock = socket.socket(family, kind, proto)
+                try:
+                    sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_MAXSEG, self.mss)
+                    for option in socket_options or ():
+                        sock.setsockopt(*option)
+                    sock.settimeout(timeout)
+                    if local_address:
+                        sock.bind((local_address, 0))
+                    sock.connect(address)
+                except OSError as exc:
+                    sock.close()
+                    last = exc
+                    continue
+                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                return SyncStream(sock)
+            raise last or OSError(f"no address found for {host}")
+
+
 # Errors where the connection, not the server, is the likely culprit.
 _RETRYABLE = (
     httpx.ReadTimeout,
@@ -96,8 +160,10 @@ def prefer_ipv4_loopback(url: str) -> str:
 class ResilientTransport(httpx.BaseTransport):
     """Connection retries, and one fresh-connection retry for stalled safe requests."""
 
-    def __init__(self, host: str):
+    def __init__(self, host: str, tcp_mss: int = DEFAULT_TCP_MSS):
         self._local = host in _LOCAL_HOSTS
+        # Loopback has no path to break; leave its segments alone.
+        self.tcp_mss = tcp_mss if (tcp_mss > 0 and not self._local and _clamp_supported()) else 0
         # Turned on for good after the first stalled request: on that network,
         # reused connections hang while new ones answer (seen on a PaaS egress).
         # A TLS handshake per request is far cheaper than a 15 s hang each time.
@@ -114,7 +180,11 @@ class ResilientTransport(httpx.BaseTransport):
             # connections expire after 5 s, before a NAT or proxy drops them.
             else httpx.Limits(max_connections=100, max_keepalive_connections=20, keepalive_expiry=5)
         )
-        return httpx.HTTPTransport(retries=1, limits=limits)
+        transport = httpx.HTTPTransport(retries=1, limits=limits)
+        if self.tcp_mss:
+            # httpx has no parameter for the backend; its pool is httpcore's.
+            transport._pool._network_backend = ClampedSegmentBackend(self.tcp_mss)
+        return transport
 
     def handle_request(self, request: httpx.Request) -> httpx.Response:
         kind = request_kind(request.method, request.url.path)

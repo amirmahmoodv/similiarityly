@@ -349,6 +349,7 @@ export const en: Dictionary = {
         list_collections: "List collections",
         collection_lookup: "Collection lookup (same connection)",
         new_connection_lookup: "Collection lookup (new connection)",
+        large_request: "Large request (512 KB body)",
       } as Record<string, string>,
       clientVersion: "App client version",
       stepOk: "Succeeded",
@@ -382,6 +383,8 @@ export const en: Dictionary = {
       qdrant_timeout:
         "Qdrant did not answer in time. The failed step below shows where; a step that fails only on the same connection points to a proxy between the app and Qdrant.",
       qdrant_auth_failed: "Qdrant rejected the API key.",
+      qdrant_large_request_failed:
+        "Small requests reach Qdrant but a large one does not. Something on the network path drops large packets or caps the request size (a proxy, tunnel or overlay network). Loading documents will fail until that is fixed.",
       llm_unreachable: "The language model service is unreachable. Check the URL.",
       llm_auth_failed: "The API key was rejected or is missing.",
       llm_http_error: "The language model service returned an error.",
@@ -438,5 +441,7 @@ export const en: Dictionary = {
     qdrant_unreachable: "The Qdrant server is unreachable; settings were not saved.",
     qdrant_timeout: "Qdrant did not answer in time; settings were not saved. Run the connection test to see which request hangs.",
     qdrant_auth_failed: "Qdrant rejected the API key; settings were not saved.",
+    qdrant_large_request_failed:
+      "Small requests reach Qdrant but a large one does not; settings were not saved. Run the connection test for details.",
   },
 };
