@@ -212,6 +212,11 @@ export const en: Dictionary = {
     similarThreshold: "“Similar” threshold",
     duplicateThreshold: "“Duplicate” threshold",
     topK: "Top results per chunk",
+    matchFloor: "Minimum score to keep a match",
+    matchFloorHint: (fallback: string) =>
+      `Matches with a vector score below this are not saved or shown. Leave empty to use the server default (${fallback}). Applies to new checks only.`,
+    matchFloorHintNoDefault:
+      "Matches with a vector score below this are not saved or shown. Leave empty to use the server default. Applies to new checks only.",
     aggregation: "Record score",
     aggregations: { max: "Best chunk", mean: "Mean of chunks" },
     rerank: "Second-stage check",
@@ -233,6 +238,9 @@ export const en: Dictionary = {
       similar_threshold: "The threshold must be between 0 and 100 percent.",
       duplicate_threshold: "The threshold must be between 0 and 100 percent.",
       thresholdOrder: "The “duplicate” threshold cannot be below the “similar” threshold.",
+      match_floor: "The minimum score must be between 0 and 100 percent, or left empty.",
+      floorAboveSimilar:
+        "The minimum score cannot be above the “similar” threshold, or similar records would lose their matches.",
       overlapTooLarge: "Overlap must be smaller than the chunk size.",
     },
   },

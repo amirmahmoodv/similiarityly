@@ -28,6 +28,8 @@ export type RepoConfig = {
     /** Second stage: a cross-encoder re-scores the top vector hits. */
     rerank: "none" | "cross_encoder";
     rerank_model: string;
+    /** 0..1 vector score below which hits are not stored; null = server default. */
+    match_floor: number | null;
   };
 };
 
@@ -128,6 +130,8 @@ export type Meta = {
   rerankers: { available: boolean; models: string[] };
   defaults: RepoConfig;
   qdrant_mode: "server" | "embedded" | "memory";
+  /** 0..1; what a repo whose `match_floor` is null uses. */
+  match_store_floor: number;
 };
 
 export type QdrantMode = "server" | "embedded" | "memory";

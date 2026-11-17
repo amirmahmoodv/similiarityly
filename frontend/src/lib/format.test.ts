@@ -104,6 +104,7 @@ describe("threshold unit conversion", () => {
       aggregation: "max",
       rerank: "cross_encoder",
       rerank_model: "BAAI/bge-reranker-v2-m3-int8",
+      match_floor: null,
     },
   };
 
@@ -120,5 +121,28 @@ describe("threshold unit conversion", () => {
     const result = draftToConfig(draft);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.errors.sort()).toEqual(["overlap", "thresholdOrder"]);
+  });
+
+  it("treats an empty match floor as the server default and round-trips a set one", () => {
+    expect(configToDraft(config).match_floor).toBe("");
+    const set = { ...config, similarity: { ...config.similarity, match_floor: 0.305 } };
+    const draft = configToDraft(set);
+    expect(draft.match_floor).toBe("30.5");
+    expect(draftToConfig(draft)).toEqual({ ok: true, config: set });
+    // Whitespace-only is still "unset".
+    const blank = draftToConfig({ ...draft, match_floor: "  " });
+    expect(blank.ok && blank.config.similarity.match_floor).toBeNull();
+  });
+
+  it("rejects a floor out of range, or above similar when there is no second stage", () => {
+    const base = configToDraft(config);
+    const out = draftToConfig({ ...base, match_floor: "120" });
+    expect(!out.ok && out.errors).toEqual(["match_floor"]);
+
+    const noRerank = { ...base, similarity: { ...base.similarity, rerank: "none" as const } };
+    const above = draftToConfig({ ...noRerank, match_floor: "80" });
+    expect(!above.ok && above.errors).toEqual(["floorAboveSimilar"]);
+    // With a second stage the floor and thresholds are on different scales.
+    expect(draftToConfig({ ...base, match_floor: "80" }).ok).toBe(true);
   });
 });

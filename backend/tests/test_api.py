@@ -129,6 +129,44 @@ def test_every_distance_metric_scores_on_the_same_scale(client, monkeypatch, sca
     assert seen["euclid"] == pytest.approx(seen["cosine"], abs=1e-4)
 
 
+def test_repo_match_floor_overrides_the_server_default(client):
+    assert client.get(f"{API}/meta").json()["match_store_floor"] == 0.3
+    base = "قرارداد خرید تجهیزات شبکه برای دفتر مرکزی شرکت"
+    weak = "هواشناسی فردا بارانی است"
+
+    default = make_repo(client, "پیش‌فرض")
+    assert default["config"]["similarity"]["match_floor"] is None
+    ingest_lines(client, default["id"], [base])
+    item = records(client, ingest_lines(client, default["id"], [weak])["id"])[0]
+    assert item["max_score"] < 0.3 and item["match_count"] == 0
+
+    open_floor = make_repo(client, "بدون کف", match_floor=0)
+    ingest_lines(client, open_floor["id"], [base])
+    item = records(client, ingest_lines(client, open_floor["id"], [weak])["id"])[0]
+    assert item["status"] == "unique" and item["match_count"] == 1
+
+    strict = make_repo(
+        client, "سخت‌گیر", match_floor=0.99, similar_threshold=0.99, duplicate_threshold=0.995
+    )
+    ingest_lines(client, strict["id"], [base])
+    near = base.replace("شرکت", "سازمان")
+    item = records(client, ingest_lines(client, strict["id"], [near])["id"])[0]
+    assert item["max_score"] < 0.99 and item["match_count"] == 0
+
+
+def test_match_floor_above_similar_threshold_is_rejected_without_rerank(client):
+    res = client.post(
+        f"{API}/repos",
+        json={
+            "name": "x",
+            "config": {"similarity": {"match_floor": 0.8, "similar_threshold": 0.75}},
+        },
+    )
+    assert res.status_code == 422
+    # With a second stage the two use different scales, so it is allowed.
+    make_repo(client, match_floor=0.8, rerank="cross_encoder", similar_threshold=0.05)
+
+
 def test_mean_aggregation_scores_a_half_known_record_lower(client):
     known = "قرارداد خرید تجهیزات شبکه منعقد شد."
     half = f"{known} هواشناسی فردا بارانی و سرد خواهد بود."

@@ -26,6 +26,7 @@ def meta(services: Services = Depends(get_services)):
         rerankers=RerankerInfo(available=rerank.available(), models=rerank.SUGGESTED_MODELS),
         defaults=default_config(services),
         qdrant_mode=services.store.mode,
+        match_store_floor=services.settings.match_store_floor,
     )
 
 

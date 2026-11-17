@@ -2,6 +2,7 @@
  * The single stored-unit ↔ displayed-unit boundary for repo configuration.
  *
  *   thresholds : stored 0..1 ratio   → edited as percent (٪)
+ *   match floor: stored 0..1 or null → edited as percent; empty = server default
  *   sizes      : stored characters   → edited as characters
  *   top_k      : stored count        → edited as results
  *
@@ -18,11 +19,15 @@ export type NumericField =
   | "min_chars"
   | "top_k"
   | "similar_threshold"
-  | "duplicate_threshold";
+  | "duplicate_threshold"
+  | "match_floor";
 
 export type ConfigDraft = Omit<RepoConfig, never> & Record<NumericField, string>;
 
-export type DraftError = NumericField | "thresholdOrder" | "overlapTooLarge";
+export type DraftError = NumericField | "thresholdOrder" | "overlapTooLarge" | "floorAboveSimilar";
+
+/** Fields where an empty draft is valid and means "use the server default". */
+const OPTIONAL: ReadonlySet<NumericField> = new Set(["match_floor"]);
 
 const LIMITS: Record<NumericField, [number, number]> = {
   batch_size: [1, 512],
@@ -32,6 +37,7 @@ const LIMITS: Record<NumericField, [number, number]> = {
   top_k: [1, 100],
   similar_threshold: [0, 100],
   duplicate_threshold: [0, 100],
+  match_floor: [0, 100],
 };
 
 /** 0.755 → "75.5" (at most two decimals, no float noise). */
@@ -44,6 +50,7 @@ export function percentRawToRatio(raw: string): number {
 }
 
 export function configToDraft(config: RepoConfig): ConfigDraft {
+  const floor = config.similarity.match_floor;
   return {
     ...structuredClone(config),
     batch_size: String(config.embedding.batch_size),
@@ -53,6 +60,7 @@ export function configToDraft(config: RepoConfig): ConfigDraft {
     top_k: String(config.similarity.top_k),
     similar_threshold: ratioToPercentRaw(config.similarity.similar_threshold),
     duplicate_threshold: ratioToPercentRaw(config.similarity.duplicate_threshold),
+    match_floor: floor === null || floor === undefined ? "" : ratioToPercentRaw(floor),
   };
 }
 
@@ -61,6 +69,7 @@ export function draftToConfig(
 ): { ok: true; config: RepoConfig } | { ok: false; errors: DraftError[] } {
   const errors: DraftError[] = [];
   const read = (field: NumericField, integer: boolean): number => {
+    if (OPTIONAL.has(field) && draft[field].trim() === "") return NaN;
     const n = rawToNumber(draft[field]);
     const [min, max] = LIMITS[field];
     if (Number.isNaN(n) || n < min || n > max || (integer && !Number.isInteger(n))) {
@@ -76,11 +85,23 @@ export function draftToConfig(
   const top_k = read("top_k", true);
   const similarPct = read("similar_threshold", false);
   const duplicatePct = read("duplicate_threshold", false);
+  const floorPct = read("match_floor", false);
+  const floorSet = !Number.isNaN(floorPct);
 
   if (!errors.includes("overlap") && !errors.includes("chunk_size") && overlap >= chunk_size) {
     errors.push("overlapTooLarge");
   }
   if (similarPct > duplicatePct) errors.push("thresholdOrder");
+  // Without a second stage both are vector scores: a floor above "similar"
+  // would drop the matches of records the job marks similar.
+  if (
+    floorSet &&
+    !errors.includes("match_floor") &&
+    draft.similarity.rerank === "none" &&
+    floorPct > similarPct
+  ) {
+    errors.push("floorAboveSimilar");
+  }
   if (errors.length) return { ok: false, errors };
 
   return {
@@ -94,6 +115,7 @@ export function draftToConfig(
         top_k,
         similar_threshold: percentRawToRatio(draft.similar_threshold),
         duplicate_threshold: percentRawToRatio(draft.duplicate_threshold),
+        match_floor: floorSet ? percentRawToRatio(draft.match_floor) : null,
       },
     },
   };

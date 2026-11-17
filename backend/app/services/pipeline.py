@@ -173,7 +173,9 @@ def run_ingest(services: Services, job_id: str) -> None:
         index = job.mode != "check_only"
         targets = _targets(services, repo, cfg) if check else [repo]
         target_cfgs = {t.id: RepoConfig.model_validate(t.config) for t in targets}
-        floor = services.settings.match_store_floor
+        floor = (
+            sim.match_floor if sim.match_floor is not None else services.settings.match_store_floor
+        )
 
         records = sorted(meta.all(Record, {"source_id": job.source_id}), key=lambda r: r.ordinal)
         processed = 0

@@ -113,7 +113,8 @@ class Settings(BaseSettings):
     # Records embedded per batch inside a job.
     job_batch_size: int = 32
     # Hits below this similarity are never stored, so thresholds can be tuned
-    # after the fact for anything above it.
+    # after the fact for anything above it. Default for repos whose
+    # similarity.match_floor is unset; a repo's own value overrides it.
     match_store_floor: float = 0.3
 
     @field_validator("cors_origins", mode="before")

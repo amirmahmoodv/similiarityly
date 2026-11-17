@@ -57,11 +57,23 @@ class SimilarityConfig(BaseModel):
     # score replaces the vector score, so thresholds then apply to it.
     rerank: Literal["none", "cross_encoder"] = "none"
     rerank_model: str = Field("BAAI/bge-reranker-v2-m3-int8", min_length=1, max_length=300)
+    # Hits whose vector score is below this are not stored as matches. None
+    # uses the server's SIM_MATCH_STORE_FLOOR. Applied when a check runs, so
+    # changing it affects new checks only.
+    match_floor: float | None = Field(None, ge=0, le=1)
 
     @model_validator(mode="after")
     def _ordered_thresholds(self):
         if self.duplicate_threshold < self.similar_threshold:
             raise ValueError("duplicate_threshold must be >= similar_threshold")
+        # Without a second stage the floor and thresholds share one scale: a
+        # floor above "similar" would hide the matches of similar records.
+        if (
+            self.rerank == "none"
+            and self.match_floor is not None
+            and self.match_floor > self.similar_threshold
+        ):
+            raise ValueError("match_floor must be <= similar_threshold")
         return self
 
 
@@ -213,6 +225,8 @@ class MetaOut(BaseModel):
     rerankers: RerankerInfo
     defaults: RepoConfig
     qdrant_mode: Literal["server", "embedded", "memory"]
+    # What a repo with no match_floor of its own uses.
+    match_store_floor: float
 
 
 class StatsOut(BaseModel):

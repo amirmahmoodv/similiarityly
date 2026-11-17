@@ -42,7 +42,7 @@ function indexSignature(c: RepoConfig): string {
 }
 
 export function RepoConfigForm({ repo }: { repo: Repo }) {
-  const { t } = useI18n();
+  const { t, n, pct } = useI18n();
   const queryClient = useQueryClient();
   const meta = useQuery({ queryKey: ["meta"], queryFn: api.meta, staleTime: Infinity });
   const repos = useQuery({ queryKey: ["repos"], queryFn: api.repos });
@@ -75,23 +75,37 @@ export function RepoConfigForm({ repo }: { repo: Repo }) {
     value: Partial<ConfigDraft[K]>,
   ) => setDraft((d) => ({ ...d, [key]: { ...d[key], ...value } }));
 
-  const numeric = (field: NumericField, label: string, unit: string, allowDecimal = false) => {
+  const numeric = (
+    field: NumericField,
+    label: string,
+    unit: string,
+    allowDecimal = false,
+    extras: { hint?: string; placeholder?: string; className?: string } = {},
+  ) => {
     const messages = t.config.errors as Record<string, string>;
     const extra =
       field === "overlap" && errors.includes("overlapTooLarge")
         ? "overlapTooLarge"
         : field === "duplicate_threshold" && errors.includes("thresholdOrder")
           ? "thresholdOrder"
-          : null;
+          : field === "match_floor" && errors.includes("floorAboveSimilar")
+            ? "floorAboveSimilar"
+            : null;
     const code = errors.includes(field) ? field : extra;
     return (
-      <Field label={label} error={code ? messages[code] : undefined}>
+      <Field
+        label={label}
+        hint={extras.hint}
+        className={extras.className}
+        error={code ? messages[code] : undefined}
+      >
         {(ids) => (
           <NumericInput
             {...ids}
             value={draft[field]}
             unit={unit}
             allowDecimal={allowDecimal}
+            placeholder={extras.placeholder}
             invalid={code !== null}
             onValueChange={(raw) => {
               setDraft((d) => ({ ...d, [field]: raw }));
@@ -129,6 +143,7 @@ export function RepoConfigForm({ repo }: { repo: Repo }) {
   const listId = React.useId();
   const rerankListId = React.useId();
   const rerankOn = draft.similarity.rerank !== "none";
+  const serverFloor = meta.data?.match_store_floor;
 
   const toggles = [
     ["unify_chars", t.config.unifyChars],
@@ -269,6 +284,14 @@ export function RepoConfigForm({ repo }: { repo: Repo }) {
                 />
               )}
             </Field>
+            {numeric("match_floor", t.config.matchFloor, t.units.percent, true, {
+              hint:
+                serverFloor === undefined
+                  ? t.config.matchFloorHintNoDefault
+                  : t.config.matchFloorHint(pct(serverFloor)),
+              placeholder: serverFloor === undefined ? undefined : n(serverFloor * 100, 2),
+              className: "sm:col-span-2",
+            })}
             <Field
               label={t.config.rerank}
               hint={rerankOn ? t.config.rerankHint : undefined}
