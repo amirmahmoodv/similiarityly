@@ -37,15 +37,20 @@ function apiOrigin(): string {
 
 const BASE = `${apiOrigin()}/api/v1`;
 
-/** `code` is the backend's stable error code; the UI translates it. */
+/**
+ * `code` is the backend's stable error code; the UI translates it.
+ * `detail` is the raw cause some errors carry, shown under "Technical details".
+ */
 export class ApiError extends Error {
   status: number;
   code: string;
+  detail: string;
 
-  constructor(status: number, code: string) {
+  constructor(status: number, code: string, detail = "") {
     super(code);
     this.status = status;
     this.code = code;
+    this.detail = detail;
   }
 }
 
@@ -93,14 +98,19 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await send(path, init);
   if (!res.ok) {
     let code = "unknown_error";
+    let detail = "";
     try {
       const body = await res.json();
       if (typeof body.detail === "string") code = body.detail;
-      else if (res.status === 422) code = "validation_error";
+      else if (typeof body.detail?.code === "string") {
+        // {code, message}: a translatable code plus the server's raw message.
+        code = body.detail.code;
+        detail = typeof body.detail.message === "string" ? body.detail.message : "";
+      } else if (res.status === 422) code = "validation_error";
     } catch {
       /* non-JSON error body */
     }
-    throw new ApiError(res.status, code);
+    throw new ApiError(res.status, code, detail);
   }
   return res.status === 204 ? (undefined as T) : res.json();
 }

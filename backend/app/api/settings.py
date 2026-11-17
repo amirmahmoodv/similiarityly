@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 
@@ -22,7 +24,24 @@ from app.schemas import (
 )
 from app.services.connections import OPENAI_DEFAULT_BASE_URL, test_embeddings, test_llm, test_qdrant
 
+log = logging.getLogger("similarityly")
 router = APIRouter(tags=["settings"])
+
+# Codes for a Qdrant that answers the read-only connection test but cannot be
+# set up: switching creates collections and payload indexes.
+QDRANT_SWITCH_CODES = ("qdrant_write_denied", "qdrant_setup_failed")
+
+
+def _failure(status: int, code: str, message: str | None) -> HTTPException:
+    """An error the UI translates by `code`, with the raw cause for "Technical details"."""
+    return HTTPException(status, {"code": code, "message": (message or "")[:500]})
+
+
+def _qdrant_switch_failure(exc: Exception) -> HTTPException:
+    status = getattr(exc, "status_code", None)
+    text = str(exc)
+    denied = status in (401, 403) or any(s in text for s in ("401", "403", "Forbidden"))
+    return _failure(502, "qdrant_write_denied" if denied else "qdrant_setup_failed", text)
 
 
 def _save(settings: Settings, changes: dict) -> Settings:
@@ -108,7 +127,7 @@ async def update_qdrant(
     if body.mode == "server":
         result = await run_in_threadpool(test_qdrant, body.url, api_key)
         if not result.ok:
-            raise HTTPException(502, result.error or "qdrant_unreachable")
+            raise _failure(502, result.error or "qdrant_unreachable", result.detail)
 
     # Check before switching: a switch that cannot be saved would be undone by
     # the next restart, silently pointing the app back at the old database.
@@ -131,7 +150,10 @@ async def update_qdrant(
         except StorageDownError as exc:
             raise HTTPException(503, "storage_unavailable") from exc
         except Exception as exc:
-            raise HTTPException(502, "qdrant_unreachable") from exc
+            # The server answered the test, so this is a setup failure (often a
+            # read-only key that cannot create collections). Log it in full.
+            log.exception("switching to Qdrant at %s failed", body.url)
+            raise _qdrant_switch_failure(exc) from exc
     saved = _save(current, changes)
     request.app.state.services.settings = saved
     return settings_out(saved)

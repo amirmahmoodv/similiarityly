@@ -10,6 +10,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+from app.api.settings import QDRANT_SWITCH_CODES
 from app.core import runtime
 from app.core.config import Settings
 from app.main import create_app
@@ -299,10 +300,51 @@ def test_qdrant_switch_failure_keeps_the_old_connection(client, monkeypatch):
     res = client.put(
         f"{API}/settings/qdrant", json={"mode": "server", "url": "https://q.example.com"}
     )
-    assert res.status_code == 502 and res.json()["detail"] == "qdrant_unreachable"
+    assert res.status_code == 502
+    assert res.json()["detail"] == {
+        "code": "qdrant_setup_failed",
+        "message": "collection create failed",
+    }
     # Still on the old store, and it still works.
     assert client.get(f"{API}/settings").json()["qdrant"]["mode"] == "memory"
     assert client.get(f"{API}/repos").status_code == 200
+
+
+def test_read_only_qdrant_key_is_reported_as_write_denied(client, monkeypatch, caplog):
+    """The test only reads, so a read-only key passes it; switching then fails."""
+    from qdrant_client.http.exceptions import UnexpectedResponse
+
+    from app.api import settings as settings_api
+    from app.core import state
+
+    monkeypatch.setattr(settings_api, "test_qdrant", lambda url, key: ConnectionTest(ok=True))
+    real_start = state.start_services
+
+    def start(settings):
+        if settings.qdrant_url:
+            raise UnexpectedResponse(403, "Forbidden", b'{"status":{"error":"read only"}}', None)
+        return real_start(settings)
+
+    monkeypatch.setattr(state, "start_services", start)
+    res = client.put(
+        f"{API}/settings/qdrant",
+        json={"mode": "server", "url": "https://q.example.com", "api_key": "k"},
+        headers={"Origin": ORIGIN},
+    )
+    assert res.status_code == 502
+    body = res.json()["detail"]
+    assert body["code"] == "qdrant_write_denied" and "403" in body["message"]
+    assert res.headers["access-control-allow-origin"] == ORIGIN
+    # Logged with a traceback, so the server log shows the cause.
+    assert "switching to Qdrant at https://q.example.com failed" in caplog.text
+    assert "Traceback" in caplog.text
+
+
+def test_unreachable_qdrant_on_save_carries_the_reason(client):
+    res = client.put(f"{API}/settings/qdrant", json={"mode": "server", "url": "http://127.0.0.1:9"})
+    assert res.status_code == 502
+    body = res.json()["detail"]
+    assert body["code"] == "qdrant_unreachable" and body["message"]
 
 
 def test_qdrant_switch_that_also_cannot_restore_reports_storage_unavailable(client, monkeypatch):
@@ -355,6 +397,7 @@ def _backend_codes() -> set[str]:
     codes: set[str] = set(EMBEDDING_ERROR_CODES)
     codes |= {"internal_error", "vector_config_mismatch", "rerank_failed", "unauthorized"}
     codes |= {"validation_error", "network_error", "unknown_error"}  # produced by the UI
+    codes |= set(QDRANT_SWITCH_CODES)
     for path in (ROOT / "backend" / "app").rglob("*.py"):
         text = path.read_text(encoding="utf-8")
         codes |= set(re.findall(r'HTTPException\(\s*\d+\s*,\s*"([a-z_]+)"', text))

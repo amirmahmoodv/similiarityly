@@ -379,6 +379,10 @@ export const en: Dictionary = {
   errors: {
     unauthorized: "Access denied; enter a valid access token.",
     title: "Something went wrong",
+    qdrant_write_denied:
+      "Qdrant accepted the connection but refused to create collections: the API key is probably read-only. Use a key with write access.",
+    qdrant_setup_failed:
+      "Connected to Qdrant, but setting up its collections failed. See the technical details.",
     embedding_not_configured:
       "The embedding service is not set up. Add its URL or API key in Settings, or choose another embedding provider for this repository.",
     embedding_auth_failed: "The embedding service rejected the API key. Check it in Settings.",

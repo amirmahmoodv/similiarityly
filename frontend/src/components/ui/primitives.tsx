@@ -3,6 +3,7 @@ import { motion, useReducedMotion } from "motion/react";
 import { AlertCircle } from "lucide-react";
 import { SignalTrace } from "@/components/hud/signal-trace";
 import { HudSpinner } from "@/components/hud/spinner";
+import { ApiError } from "@/lib/api";
 import { AnimatedButton } from "@/components/motion";
 import { useI18n } from "@/i18n";
 import { cn } from "@/lib/cn";
@@ -133,6 +134,16 @@ export function ErrorNote({ error, onRetry }: { error: unknown; onRetry?: () => 
         <Button variant="secondary" size="sm" onClick={onRetry}>
           {t.common.retry}
         </Button>
+      )}
+      {error instanceof ApiError && error.detail && (
+        <details className="basis-full text-xs text-muted-foreground">
+          <summary className="cursor-pointer select-none rounded outline-none focus-visible:ring-2 focus-visible:ring-ring">
+            {t.settings.details}
+          </summary>
+          <pre dir="ltr" className="mt-1 whitespace-pre-wrap break-all text-start font-mono">
+            {error.detail}
+          </pre>
+        </details>
       )}
     </div>
   );
