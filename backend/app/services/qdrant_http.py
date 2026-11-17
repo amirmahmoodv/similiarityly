@@ -47,6 +47,10 @@ class ResilientTransport(httpx.BaseTransport):
 
     def __init__(self, host: str):
         self._local = host in _LOCAL_HOSTS
+        # Turned on for good after the first stalled request: on that network,
+        # reused connections hang while new ones answer (seen on a PaaS egress).
+        # A TLS handshake per request is far cheaper than a 15 s hang each time.
+        self.keepalive_disabled = False
         self._transport = self._new_transport()
 
     def _new_transport(self) -> httpx.HTTPTransport:
@@ -54,7 +58,7 @@ class ResilientTransport(httpx.BaseTransport):
         # local connections can add delays. `retries=1`: one more try for a failed connect.
         limits = (
             httpx.Limits(max_connections=None, max_keepalive_connections=0)
-            if self._local
+            if self._local or self.keepalive_disabled
             # httpx's own defaults; Limits() alone would mean "unlimited". Idle
             # connections expire after 5 s, before a NAT or proxy drops them.
             else httpx.Limits(max_connections=100, max_keepalive_connections=20, keepalive_expiry=5)
@@ -82,7 +86,14 @@ class ResilientTransport(httpx.BaseTransport):
                 request.url.path,
                 type(exc).__name__,
             )
-            # Drop every kept-alive connection: one stalled, others may be too.
+            # Drop every kept-alive connection (one stalled, others may be too)
+            # and stop keeping any: the same thing would happen on the next reuse.
+            if not self.keepalive_disabled:
+                log.warning(
+                    "Qdrant connection reuse is unreliable on this network; "
+                    "using a new connection per request from now on"
+                )
+                self.keepalive_disabled = True
             self._transport.close()
             self._transport = self._new_transport()
             retry_read = (

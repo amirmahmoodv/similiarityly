@@ -347,23 +347,29 @@ def test_unreachable_qdrant_on_save_carries_the_reason(client):
     assert body["code"] == "qdrant_unreachable" and body["message"]
 
 
-def test_qdrant_switch_that_also_cannot_restore_reports_storage_unavailable(client, monkeypatch):
-    from app.api import settings as settings_api
+def test_old_store_keeps_serving_while_the_new_one_is_built(client, monkeypatch):
+    """Requests during a slow switch used to hit an already closed store."""
     from app.core import state
+    from app.models import Repo
 
-    monkeypatch.setattr(settings_api, "test_qdrant", lambda *args: ConnectionTest(ok=True))
+    real_start = state.start_services
+    seen = {}
 
     def start(settings):
-        raise RuntimeError("everything is down")
+        old = client.app.state.services
+        seen["old"] = old
+        seen["repos_during_build"] = old.meta.count(Repo)  # raises if closed
+        return real_start(settings)
 
     monkeypatch.setattr(state, "start_services", start)
-    res = client.put(
-        f"{API}/settings/qdrant",
-        json={"mode": "server", "url": "https://q.example.com"},
-        headers={"Origin": ORIGIN},
-    )
-    assert res.status_code == 503 and res.json()["detail"] == "storage_unavailable"
-    assert res.headers["access-control-allow-origin"] == ORIGIN
+    res = client.put(f"{API}/settings/qdrant", json={"mode": "embedded"})
+    assert res.status_code == 200, res.text
+    assert seen["repos_during_build"] == 0
+    # Swapped in, and only then the old store was closed.
+    assert client.app.state.services is not seen["old"]
+    with pytest.raises(RuntimeError, match="closed"):
+        seen["old"].meta.count(Repo)
+    assert client.get(f"{API}/repos").status_code == 200
 
 
 # ---- Every kind of error is readable cross-origin ----------------------------

@@ -147,3 +147,33 @@ def test_qdrant_check_survives_one_stalled_lookup(monkeypatch):
     assert result.ok, result
     assert all(step.ok for step in result.steps)
     assert qdrant_http.FIRST_READ_ATTEMPT_TIMEOUT < 60
+
+
+def test_keep_alive_is_turned_off_after_the_first_stall(monkeypatch, caplog):
+    """Runflare: every reused connection stalled. After one stall, stop reusing."""
+    transport = ResilientTransport("qdrant.example.com")
+    assert transport._transport._pool._max_keepalive_connections == 20
+
+    stalls = {"left": 1}
+    inner_cls = qdrant_http.httpx.HTTPTransport
+    real_handle = inner_cls.handle_request
+
+    def handle(self, request):
+        if stalls["left"]:
+            stalls["left"] -= 1
+            raise httpx.ReadTimeout("stalled", request=request)
+        return httpx.Response(200, json={})
+
+    monkeypatch.setattr(inner_cls, "handle_request", handle)
+    client = httpx.Client(base_url="https://q.example.com", transport=transport, timeout=60)
+    assert client.get("/collections/a/exists").status_code == 200
+    assert transport.keepalive_disabled
+    assert transport._transport._pool._max_keepalive_connections == 0
+    assert "new connection per request from now on" in caplog.text
+
+    # Later requests go straight through on fresh connections; the notice is logged once.
+    caplog.clear()
+    assert client.get("/collections/b/exists").status_code == 200
+    assert "from now on" not in caplog.text
+    monkeypatch.setattr(inner_cls, "handle_request", real_handle)
+    transport.close()

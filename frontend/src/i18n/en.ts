@@ -406,8 +406,6 @@ export const en: Dictionary = {
       "The embedding model could not be downloaded or loaded. Check the server's internet access and the model name.",
     settings_not_writable:
       "The server cannot save settings: its data folder is not writable. Fix the volume permissions and try again.",
-    storage_unavailable:
-      "Switching Qdrant failed and the previous connection could not be restored. Restart the API.",
     embedding_failed: "Embedding the text failed; the model or service is unavailable.",
     rerank_failed: "The second-stage model could not be loaded or run.",
     vector_config_mismatch: "The vector size does not match the repository index; reindex it.",

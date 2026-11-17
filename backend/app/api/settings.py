@@ -8,7 +8,6 @@ from app.core.runtime import SettingsNotWritableError, ensure_writable, save_ove
 from app.core.state import (
     JobsRunningError,
     Services,
-    StorageDownError,
     get_services,
     swap_services,
 )
@@ -151,8 +150,6 @@ async def update_qdrant(
             await run_in_threadpool(swap_services, request.app, candidate)
         except JobsRunningError as exc:
             raise HTTPException(409, "jobs_running") from exc
-        except StorageDownError as exc:
-            raise HTTPException(503, "storage_unavailable") from exc
         except Exception as exc:
             # The server answered the test, so this is a setup failure (often a
             # read-only key that cannot create collections). Log it in full.

@@ -123,34 +123,29 @@ class JobsRunningError(RuntimeError):
     pass
 
 
-class StorageDownError(RuntimeError):
-    """Switching Qdrant failed and the previous connection could not be restored."""
-
-
 _swap_lock = threading.Lock()
 
 
 def swap_services(app, settings: Settings) -> Services:
     """Reconnect to a different Qdrant. Refused while a job is queued or running.
 
-    The old client is closed first (embedded Qdrant locks its directory). If the
-    new connection fails, the previous one is restored and the error re-raised.
+    The new store is built while the old one keeps serving requests, which can
+    take a while against a slow remote server; only then is it swapped in and
+    the old one closed. If building it fails, nothing changed: the old store is
+    still in place and the error is re-raised.
+
+    Building first is safe because two embedded stores never coexist: embedded
+    always means the one folder under data_dir, and saving the same target is
+    not a switch.
     """
     with _swap_lock:
         old: Services = app.state.services
         if old.meta.count(Job, {"status": ["queued", "running"]}):
             raise JobsRunningError("jobs_running")
+        new = start_services(settings)
+        app.state.services = new
         stop_services(old, wait=True)
-        try:
-            app.state.services = start_services(settings)
-        except Exception as exc:
-            try:
-                app.state.services = start_services(old.settings)
-            except Exception as restore_exc:
-                log.exception("could not reconnect to the previous Qdrant")
-                raise StorageDownError(str(restore_exc)) from exc
-            raise
-        return app.state.services
+        return new
 
 
 def get_services(request: Request) -> Services:
