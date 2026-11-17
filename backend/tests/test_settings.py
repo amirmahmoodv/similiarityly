@@ -251,6 +251,7 @@ def test_unhandled_error_is_json_500_with_cors(tmp_path):
         data_dir=tmp_path,
         qdrant_in_memory=True,
         cors_origins=["https://sim.example.com"],
+        allow_public_without_token=True,
     )
     app = create_app(s)
 

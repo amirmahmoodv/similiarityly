@@ -6,6 +6,8 @@ services:
     # in backend/uv.lock. Dependabot proposes updates.
     image: qdrant/qdrant:v1.20.2@sha256:d277592721d2e3b73f9b797b53cf05e6a5bb2134f6d13fdbda4ca51782afbcac
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
     volumes:
       - qdrant_data:/qdrant/storage
     ports:
@@ -21,6 +23,15 @@ services:
   api:
     build: ./backend
     restart: unless-stopped
+    # Runs as UID 10001 and needs no Linux capabilities. The image is read-only;
+    # only /data (volume) and /tmp (uploads being parsed) are writable.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
     depends_on:
       qdrant:
         condition: service_healthy
@@ -32,6 +43,9 @@ services:
       SIM_API_TOKEN: ${SIM_API_TOKEN:-}
       # Only for a separate API domain: the UI's origin, e.g. https://sim.example.com.
       SIM_CORS_ORIGINS: ${SIM_CORS_ORIGINS:-}
+      # The API refuses to start with a public SIM_CORS_ORIGINS and no token. Set to
+      # true only when an authenticating proxy in front of the API protects it.
+      SIM_ALLOW_PUBLIC_WITHOUT_TOKEN: ${SIM_ALLOW_PUBLIC_WITHOUT_TOKEN:-false}
     volumes:
       # settings.json (connections saved from the UI) + downloaded embedding models
       - api_data:/data
@@ -48,6 +62,8 @@ services:
   web:
     build: ./frontend
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
     environment:
       # Public URL of the API when it has its own domain (https://api.sim.example.com).
       # Empty = the UI calls /api on its own origin, proxied to the api service.

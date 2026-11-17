@@ -90,6 +90,8 @@ Only process-level settings stay in the environment — see
 | `SIM_DEFAULT_QDRANT_URL` | Qdrant server used until one is saved in Settings (compose sets it to the bundled service). Empty = embedded. |
 | `SIM_DATA_DIR` | Where runtime settings, embedded Qdrant files and downloaded models live. |
 | `SIM_CORS_ORIGINS` | Browser origins allowed to call the API from another origin (comma-separated or JSON list). Only for a separate API domain. |
+| `SIM_ENABLE_DOCS` | Serve `/docs` and `/openapi.json` (off by default). |
+| `SIM_ALLOW_PUBLIC_WITHOUT_TOKEN` | Let the API start with a public `SIM_CORS_ORIGINS` and no token — only behind an authenticating proxy. |
 | `SIM_MAX_UPLOAD_MB` | Upload size limit (keep in step with `client_max_body_size` in `frontend/nginx.conf`). |
 | `API_URL` | Docker `web` service: public URL of the API when it has its own domain. Empty = `/api` on the UI's origin. |
 | `API_UPSTREAM` | Docker `web` service, same-origin mode only: where nginx proxies `/api/` (default `http://api:8000`). |
@@ -111,11 +113,28 @@ Without a token, anyone who can reach the API can read, change and delete all
 data and change the connection settings. Always serve it over HTTPS when it
 leaves your machine — the token and uploaded data travel in every request.
 
-Other hardening in place: saved API keys are write-only (never returned by the
-API) and are never sent to an endpoint other than the one they were saved for;
-CSV exports neutralize spreadsheet formulas; uploads are size-capped while
-streaming; the API container runs as a non-root user; nginx sends a strict
-Content-Security-Policy and related headers.
+The API **refuses to start** when `SIM_CORS_ORIGINS` names a public origin
+(anything but `localhost`/`127.0.0.1`) and no token is set, and it rejects `*`
+as an origin. A token shorter than 16 characters is logged as a warning.
+
+Other hardening in place:
+
+- Saved API keys are write-only (never returned by the API) and are never sent
+  to an endpoint other than the one they were saved for.
+- Request bodies are capped by the API itself (`SIM_MAX_UPLOAD_MB` + 1 MB),
+  before parsing, so it is safe without a proxy limit in front.
+- API responses carry `Cache-Control: no-store`, a deny-all CSP, `nosniff`,
+  `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer` and HSTS; `/docs` and
+  `/openapi.json` are off unless `SIM_ENABLE_DOCS=true`; no `Server` header.
+- The web container sends a strict Content-Security-Policy (scripts from its
+  own origin only; `connect-src` limited to the API), `frame-ancestors 'none'`,
+  `Cross-Origin-Opener-Policy`, HSTS and related headers.
+- Containers run with `no-new-privileges`; the API runs as a non-root user with
+  no Linux capabilities and a read-only root filesystem (only `/data` and
+  `/tmp` are writable). CSV exports neutralize spreadsheet formulas.
+
+HSTS only takes effect over HTTPS; terminate TLS in your reverse proxy and
+redirect plain HTTP to HTTPS there.
 
 > **Upgrading an existing Docker volume:** the API container now runs as UID
 > 10001. If the `api_data` volume was created by an older (root) image, fix its

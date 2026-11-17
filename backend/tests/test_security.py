@@ -147,3 +147,149 @@ def test_upload_over_limit_rejected(tmp_path):
         res = c.post(f"{API}/sources/preview", files={"file": ("big.txt", big, "text/plain")})
         assert res.status_code == 413
         assert res.json()["detail"] == "file_too_large"
+
+
+# ---- startup guard -------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "origins",
+    [["https://sim.example.com"], ["http://localhost:5173", "https://ui.example.org"]],
+)
+def test_public_origin_without_token_refuses_to_start(tmp_path, origins):
+    with pytest.raises(RuntimeError, match="SIM_API_TOKEN"):
+        create_app(make_settings(tmp_path, cors_origins=origins))
+
+
+@pytest.mark.parametrize(
+    "kw",
+    [
+        {"cors_origins": ["https://sim.example.com"], "api_token": "x" * 32},
+        {"cors_origins": ["https://sim.example.com"], "allow_public_without_token": True},
+        {
+            "cors_origins": [
+                "http://localhost:5173",
+                "http://127.0.0.1:8080",
+                "http://app.localhost",
+            ]
+        },
+        {"cors_origins": []},
+    ],
+)
+def test_safe_configurations_start(tmp_path, kw):
+    create_app(make_settings(tmp_path, **kw))
+
+
+def test_wildcard_origin_is_refused(tmp_path):
+    with pytest.raises(RuntimeError, match=r"'\*'"):
+        create_app(make_settings(tmp_path, cors_origins=["*"], api_token="x" * 32))
+
+
+def test_short_token_is_warned_about(tmp_path, caplog):
+    create_app(make_settings(tmp_path, api_token="short"))
+    assert "shorter than" in caplog.text
+
+
+# ---- API docs ------------------------------------------------------------------
+
+
+def test_docs_are_off_by_default(client):
+    for path in ("/docs", "/redoc", "/openapi.json"):
+        assert client.get(path).status_code == 404, path
+
+
+def test_docs_can_be_enabled(tmp_path, monkeypatch):
+    monkeypatch.setenv("SIM_ENABLE_DOCS", "true")
+    s = Settings(_env_file=None, data_dir=tmp_path, qdrant_in_memory=True)
+    with TestClient(create_app(s)) as c:
+        assert c.get("/openapi.json").status_code == 200
+        docs = c.get("/docs")
+        assert docs.status_code == 200
+        # Swagger UI loads scripts from a CDN, so the API's strict CSP is skipped there.
+        assert "content-security-policy" not in docs.headers
+
+
+# ---- security headers -------------------------------------------------------------
+
+
+def test_security_headers_on_every_kind_of_response(tmp_path):
+    from app.core.http import API_SECURITY_HEADERS
+
+    app = create_app(make_settings(tmp_path, api_token="t" * 32))
+
+    @app.get(f"{API}/boom")
+    def boom():
+        raise RuntimeError("boom")
+
+    auth = {"Authorization": "Bearer " + "t" * 32}
+    with TestClient(app, raise_server_exceptions=False) as c:
+        responses = {
+            "health": c.get("/health"),
+            "ok": c.get(f"{API}/repos", headers=auth),
+            "401": c.get(f"{API}/repos"),
+            "404": c.get(f"{API}/repos/missing", headers=auth),
+            "422": c.post(f"{API}/repos", json={}, headers=auth),
+            "500": c.get(f"{API}/boom", headers=auth),
+        }
+    for kind, res in responses.items():
+        for name, value in API_SECURITY_HEADERS.items():
+            assert res.headers.get(name) == value, (kind, name)
+        if kind != "health":
+            assert res.headers.get("cache-control") == "no-store", kind
+
+
+# ---- request body limit -----------------------------------------------------------
+
+
+def test_declared_oversized_body_is_refused_before_parsing(tmp_path):
+    s = make_settings(
+        tmp_path,
+        max_upload_mb=1,
+        cors_origins=["https://sim.example.com"],
+        api_token="t" * 32,
+    )
+    with TestClient(create_app(s)) as c:
+        res = c.post(
+            f"{API}/sources/preview",
+            content=b"x" * (3 * 1024 * 1024),
+            headers={
+                "Content-Type": "application/octet-stream",
+                "Origin": "https://sim.example.com",
+                "Authorization": "Bearer " + "t" * 32,
+            },
+        )
+    assert res.status_code == 413 and res.json()["detail"] == "file_too_large"
+    assert res.headers["access-control-allow-origin"] == "https://sim.example.com"
+
+
+def test_streamed_oversized_body_is_cut_off(tmp_path):
+    def chunks():  # no Content-Length: sent chunked, as a valid multipart upload
+        crlf = b"\r\n"
+        yield (
+            b"--zz"
+            + crlf
+            + b'Content-Disposition: form-data; name="file"; filename="big.txt"'
+            + crlf
+            + b"Content-Type: text/plain"
+            + crlf * 2
+        )
+        for _ in range(4):
+            yield b"x" * (1024 * 1024)
+        yield crlf + b"--zz--" + crlf
+
+    with TestClient(create_app(make_settings(tmp_path, max_upload_mb=1))) as c:
+        res = c.post(
+            f"{API}/sources/preview",
+            content=chunks(),
+            headers={"Content-Type": "multipart/form-data; boundary=zz"},
+        )
+    assert res.status_code == 413 and res.json()["detail"] == "file_too_large"
+
+
+def test_body_within_limit_still_works(tmp_path):
+    with TestClient(create_app(make_settings(tmp_path, max_upload_mb=1))) as c:
+        res = c.post(
+            f"{API}/sources/preview",
+            files={"file": ("ok.txt", "یک خط متن".encode(), "text/plain")},
+        )
+    assert res.status_code == 200, res.text

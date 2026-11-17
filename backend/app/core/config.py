@@ -95,6 +95,12 @@ class Settings(BaseSettings):
     # setup: without it anyone who can reach the API can read and delete data.
     api_token: str | None = None
 
+    # Serve /docs and /openapi.json. Off by default: they map every endpoint.
+    enable_docs: bool = False
+    # Start even though SIM_CORS_ORIGINS names a public origin and no token is
+    # set: only when an authenticating proxy in front of the API protects it.
+    allow_public_without_token: bool = False
+
     # Run jobs in the request thread (tests).
     jobs_inline: bool = False
     # Records embedded per batch inside a job.

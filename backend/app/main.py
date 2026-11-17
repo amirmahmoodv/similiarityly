@@ -1,52 +1,50 @@
 import logging
 from contextlib import asynccontextmanager
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from starlette.responses import JSONResponse
-from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.api import router
 from app.core.auth import TokenAuthMiddleware
 from app.core.config import Settings
+from app.core.http import BodyLimitMiddleware, CatchErrorsMiddleware, SecurityHeadersMiddleware
 from app.core.runtime import apply_overrides
 from app.core.state import start_services, stop_services
 
 log = logging.getLogger("similarityly")
 
 
-class CatchErrorsMiddleware:
-    """Turns an unhandled exception into a JSON 500 inside the CORS layer.
+_LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
+MIN_TOKEN_LENGTH = 16
 
-    Starlette builds its own 500 in the outermost middleware, outside CORS, so
-    the response has no CORS headers. A UI on another origin then cannot read
-    it and only sees a network error. Answering here keeps the CORS headers and
-    gives the UI a stable error code; the traceback goes to the log.
-    """
 
-    def __init__(self, app: ASGIApp):
-        self.app = app
+def _is_local_origin(origin: str) -> bool:
+    try:
+        host = urlsplit(origin).hostname or ""
+    except ValueError:
+        return False
+    return host in _LOCAL_HOSTS or host.endswith(".localhost")
 
-    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] != "http":
-            await self.app(scope, receive, send)
-            return
-        started = False
 
-        async def tracking_send(message: Message) -> None:
-            nonlocal started
-            if message["type"] == "http.response.start":
-                started = True
-            await send(message)
-
-        try:
-            await self.app(scope, receive, tracking_send)
-        except Exception:
-            log.exception("unhandled error: %s %s", scope.get("method"), scope.get("path"))
-            if started:  # headers already sent; nothing better to do
-                raise
-            response = JSONResponse({"detail": "internal_error"}, status_code=500)
-            await response(scope, receive, send)
+def check_security(settings: Settings) -> None:
+    """Refuse configurations that would publish the API without protection."""
+    public_origins = [o for o in settings.cors_origins if not _is_local_origin(o)]
+    if "*" in settings.cors_origins:
+        raise RuntimeError("SIM_CORS_ORIGINS must list origins explicitly; '*' is not allowed.")
+    if public_origins and not settings.api_token and not settings.allow_public_without_token:
+        raise RuntimeError(
+            f"SIM_CORS_ORIGINS allows {public_origins}, so the API is meant to be public, "
+            "but SIM_API_TOKEN is not set: anyone could read and delete all data. Set "
+            "SIM_API_TOKEN, or SIM_ALLOW_PUBLIC_WITHOUT_TOKEN=true if an authenticating "
+            "proxy in front of the API already protects it."
+        )
+    if settings.api_token and len(settings.api_token) < MIN_TOKEN_LENGTH:
+        log.warning(
+            "SIM_API_TOKEN is shorter than %d characters; generate a longer one with "
+            'python -c "import secrets; print(secrets.token_urlsafe(32))"',
+            MIN_TOKEN_LENGTH,
+        )
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -59,9 +57,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         yield
         stop_services(app.state.services)
 
-    app = FastAPI(title="Similarityly API", version="0.1.0", lifespan=lifespan)
-    # Innermost of the custom middlewares, so its 500s still pass through CORS.
+    check_security(settings)
+    docs = settings.enable_docs
+    app = FastAPI(
+        title="Similarityly API",
+        version="0.1.0",
+        lifespan=lifespan,
+        # Off by default: the schema maps every endpoint for anyone who asks.
+        docs_url="/docs" if docs else None,
+        redoc_url=None,
+        openapi_url="/openapi.json" if docs else None,
+    )
+    # Added innermost first; see app/core/http.py for the resulting order.
     app.add_middleware(CatchErrorsMiddleware)
+    # Uploads plus room for the multipart envelope and form fields.
+    app.add_middleware(BodyLimitMiddleware, max_bytes=(settings.max_upload_mb + 1) * 1024 * 1024)
     if settings.api_token:
         app.add_middleware(TokenAuthMiddleware, settings=settings)
     else:
@@ -69,6 +79,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "SIM_API_TOKEN is not set: the API accepts unauthenticated requests. "
             "Only run this way on a trusted, local-only setup."
         )
+    app.add_middleware(SecurityHeadersMiddleware)
     # Added last so it runs first and also answers preflights / 401s with CORS headers.
     app.add_middleware(
         CORSMiddleware,

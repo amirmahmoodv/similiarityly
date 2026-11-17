@@ -20,10 +20,13 @@ RUN useradd --system --uid 10001 --home-dir /app app \
     && chown -R app:app /data
 USER app
 
+# The root filesystem is read-only in compose: every cache lives on /data.
 ENV PATH="/app/.venv/bin:${PATH}" \
     PYTHONUNBUFFERED=1 \
     SIM_DATA_DIR=/data \
-    FASTEMBED_CACHE_PATH=/data/models
+    FASTEMBED_CACHE_PATH=/data/models \
+    HF_HOME=/data/huggingface
 VOLUME /data
 EXPOSE 8000
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# --no-server-header: do not advertise the server software.
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-server-header"]

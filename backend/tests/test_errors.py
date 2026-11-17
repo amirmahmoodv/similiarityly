@@ -37,6 +37,8 @@ def make_settings(tmp_path, **kw) -> Settings:
         qdrant_in_memory=True,
         jobs_inline=True,
         cors_origins=[ORIGIN],
+        # Public origin without a token is refused at startup unless declared.
+        allow_public_without_token=not kw.get("api_token"),
         **kw,
     )
 

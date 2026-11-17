@@ -19,5 +19,8 @@ Only the latest commit on the default branch receives security fixes.
 Similarityly has no user accounts. Its threat model assumes that either
 `SIM_API_TOKEN` is set, or the service is reachable only by trusted users
 (local-only binding, VPN, or an authenticating reverse proxy). Running it on an
-untrusted network without a token is unsupported. See the
+untrusted network without a token is unsupported, and the API refuses to start
+when `SIM_CORS_ORIGINS` names a public origin but no token is set (override:
+`SIM_ALLOW_PUBLIC_WITHOUT_TOKEN=true`, for deployments behind an authenticating
+proxy). See the
 [Security section of the README](README.md#security).
