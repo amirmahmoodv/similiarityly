@@ -92,6 +92,7 @@ Only process-level settings stay in the environment — see
 | `SIM_CORS_ORIGINS` | Browser origins allowed to call the API from another origin (comma-separated or JSON list). Only for a separate API domain. |
 | `SIM_MAX_UPLOAD_MB` | Upload size limit (keep in step with `client_max_body_size` in `frontend/nginx.conf`). |
 | `API_URL` | Docker `web` service: public URL of the API when it has its own domain. Empty = `/api` on the UI's origin. |
+| `API_UPSTREAM` | Docker `web` service, same-origin mode only: where nginx proxies `/api/` (default `http://api:8000`). |
 | `WEB_BIND` / `WEB_PORT` / `API_BIND` / `API_PORT` / `QDRANT_PORT` | Docker host interfaces and ports. |
 
 The old connection variables (`SIM_QDRANT_URL`, `SIM_QDRANT_API_KEY`,
