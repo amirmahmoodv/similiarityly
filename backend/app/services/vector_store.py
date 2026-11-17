@@ -3,6 +3,8 @@
 import threading
 import uuid
 from dataclasses import dataclass
+from typing import Any
+from urllib.parse import urlsplit
 
 from qdrant_client import QdrantClient
 from qdrant_client import models as qm
@@ -20,12 +22,26 @@ _DISTANCE_NAME = {v: k for k, v in _DISTANCE.items()}
 _PAYLOAD_INDEXES = ("source_id", "record_id")
 
 
+def server_client(url: str, api_key: str | None, **kwargs: Any) -> QdrantClient:
+    """A client for a Qdrant server URL, with the port the URL actually means.
+
+    qdrant-client fills in 6333 when the URL has no port, so
+    "https://qdrant.example.com" would silently go to :6333 instead of :443 and
+    time out behind a reverse proxy. Use the scheme's standard port instead, as
+    browsers and curl do. A trailing "/" is dropped; it would become a "//" prefix.
+    """
+    url = url.strip().rstrip("/")
+    parts = urlsplit(url)
+    port = parts.port or (443 if parts.scheme == "https" else 80)
+    return QdrantClient(url=url, port=port, api_key=api_key or None, **kwargs)
+
+
 def connect(settings: Settings) -> tuple[QdrantClient, str]:
     """One client per process; embedded mode locks its directory."""
     if settings.qdrant_in_memory:
         return QdrantClient(":memory:"), "memory"
     if settings.qdrant_url:
-        return QdrantClient(url=settings.qdrant_url, api_key=settings.qdrant_api_key), "server"
+        return server_client(settings.qdrant_url, settings.qdrant_api_key), "server"
     path = settings.data_dir / "qdrant"
     path.mkdir(parents=True, exist_ok=True)
     return QdrantClient(path=str(path)), "embedded"

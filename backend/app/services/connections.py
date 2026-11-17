@@ -8,9 +8,9 @@ import time
 
 import anthropic
 import httpx
-from qdrant_client import QdrantClient
 
 from app.schemas import ConnectionTest
+from app.services.vector_store import server_client
 
 OPENAI_DEFAULT_BASE_URL = "https://api.openai.com/v1"
 _TIMEOUT = 10.0
@@ -24,9 +24,7 @@ def test_qdrant(url: str, api_key: str | None) -> ConnectionTest:
     start = time.perf_counter()
     client = None
     try:
-        client = QdrantClient(
-            url=url, api_key=api_key or None, timeout=int(_TIMEOUT), check_compatibility=False
-        )
+        client = server_client(url, api_key, timeout=int(_TIMEOUT), check_compatibility=False)
         collections = client.get_collections().collections
         version = None
         try:

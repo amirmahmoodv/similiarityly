@@ -221,3 +221,25 @@ def test_cors_allows_the_configured_ui_origin(tmp_path):
         assert res.headers["access-control-allow-origin"] == "https://sim.example.com"
         other = c.get(f"{API}/settings", headers={"Origin": "https://evil.example.com"})
         assert "access-control-allow-origin" not in other.headers
+
+
+@pytest.mark.parametrize(
+    ("url", "port", "https"),
+    [
+        ("https://qdrant.example.com/", 443, True),
+        ("https://qdrant.example.com", 443, True),
+        ("http://qdrant.example.com", 80, False),
+        ("http://qdrant:6333", 6333, False),
+        ("https://qdrant.example.com:8443/", 8443, True),
+    ],
+)
+def test_qdrant_url_without_port_uses_scheme_default(url, port, https):
+    from app.services.vector_store import server_client
+
+    client = server_client(url, None)
+    try:
+        remote = client._client
+        assert remote._port == port and remote._https is https
+        assert not remote._prefix  # a trailing "/" must not become a path prefix
+    finally:
+        client.close()
