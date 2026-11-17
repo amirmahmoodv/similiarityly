@@ -379,11 +379,23 @@ export const en: Dictionary = {
   errors: {
     unauthorized: "Access denied; enter a valid access token.",
     title: "Something went wrong",
+    embedding_not_configured:
+      "The embedding service is not set up. Add its URL or API key in Settings, or choose another embedding provider for this repository.",
+    embedding_auth_failed: "The embedding service rejected the API key. Check it in Settings.",
+    embedding_unreachable: "The embedding service is unreachable. Check its URL in Settings.",
+    embedding_provider_unavailable: "The local embedding provider is not installed on the server.",
+    embedding_model_unavailable:
+      "The embedding model could not be downloaded or loaded. Check the server's internet access and the model name.",
+    settings_not_writable:
+      "The server cannot save settings: its data folder is not writable. Fix the volume permissions and try again.",
+    storage_unavailable:
+      "Switching Qdrant failed and the previous connection could not be restored. Restart the API.",
     embedding_failed: "Embedding the text failed; the model or service is unavailable.",
     rerank_failed: "The second-stage model could not be loaded or run.",
     vector_config_mismatch: "The vector size does not match the repository index; reindex it.",
     network_error: "Could not reach the server.",
     unknown_error: "An unknown error occurred.",
+    internal_error: "The server hit an unexpected error; details are in the API log.",
     validation_error: "The values entered are not valid.",
     repo_not_found: "Repository not found.",
     repo_name_taken: "A repository with this name already exists.",

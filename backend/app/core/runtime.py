@@ -32,6 +32,22 @@ EDITABLE = {
 _lock = threading.Lock()
 
 
+class SettingsNotWritableError(OSError):
+    """settings.json cannot be written, typically a /data volume the app user does not own."""
+
+
+def ensure_writable(settings: Settings) -> None:
+    """Fail before changing anything if a later save could not be stored."""
+    path = settings.runtime_settings_path
+    probe = path.with_suffix(".probe")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        probe.write_text("", encoding="utf-8")
+        probe.unlink()
+    except OSError as exc:
+        raise SettingsNotWritableError(f"{path.parent}: {exc}") from exc
+
+
 def load_overrides(settings: Settings) -> dict[str, Any]:
     path = settings.runtime_settings_path
     try:
@@ -57,12 +73,15 @@ def save_overrides(settings: Settings, changes: dict[str, Any]) -> Settings:
     with _lock:
         data = load_overrides(settings) | changes
         path = settings.runtime_settings_path
-        path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
         try:
-            os.chmod(tmp, 0o600)  # holds API keys
-        except OSError:
-            pass
-        os.replace(tmp, path)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+            try:
+                os.chmod(tmp, 0o600)  # holds API keys
+            except OSError:
+                pass
+            os.replace(tmp, path)
+        except OSError as exc:
+            raise SettingsNotWritableError(f"{path}: {exc}") from exc
     return settings.model_copy(update=changes)

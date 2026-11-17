@@ -2,8 +2,14 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 
 from app.core.config import Settings
-from app.core.runtime import save_overrides
-from app.core.state import JobsRunningError, Services, get_services, swap_services
+from app.core.runtime import SettingsNotWritableError, ensure_writable, save_overrides
+from app.core.state import (
+    JobsRunningError,
+    Services,
+    StorageDownError,
+    get_services,
+    swap_services,
+)
 from app.schemas import (
     ConnectionTest,
     EmbeddingsSettingsIn,
@@ -17,6 +23,13 @@ from app.schemas import (
 from app.services.connections import OPENAI_DEFAULT_BASE_URL, test_embeddings, test_llm, test_qdrant
 
 router = APIRouter(tags=["settings"])
+
+
+def _save(settings: Settings, changes: dict) -> Settings:
+    try:
+        return save_overrides(settings, changes)
+    except SettingsNotWritableError as exc:
+        raise HTTPException(500, "settings_not_writable") from exc
 
 
 def settings_out(s: Settings) -> SettingsOut:
@@ -97,6 +110,13 @@ async def update_qdrant(
         if not result.ok:
             raise HTTPException(502, result.error or "qdrant_unreachable")
 
+    # Check before switching: a switch that cannot be saved would be undone by
+    # the next restart, silently pointing the app back at the old database.
+    try:
+        ensure_writable(current)
+    except SettingsNotWritableError as exc:
+        raise HTTPException(500, "settings_not_writable") from exc
+
     candidate = current.model_copy(update=changes)
     unchanged = (
         candidate.qdrant_mode == current.qdrant_mode
@@ -108,9 +128,11 @@ async def update_qdrant(
             await run_in_threadpool(swap_services, request.app, candidate)
         except JobsRunningError as exc:
             raise HTTPException(409, "jobs_running") from exc
+        except StorageDownError as exc:
+            raise HTTPException(503, "storage_unavailable") from exc
         except Exception as exc:
             raise HTTPException(502, "qdrant_unreachable") from exc
-    saved = save_overrides(current, changes)
+    saved = _save(current, changes)
     request.app.state.services.settings = saved
     return settings_out(saved)
 
@@ -140,7 +162,7 @@ def update_embeddings(body: EmbeddingsSettingsIn, services: Services = Depends(g
         "openai_base_url": _embeddings_url(body.base_url),
         "openai_api_key": _key(body.api_key, s.openai_api_key, _same_embeddings(body.base_url, s)),
     }
-    services.settings = save_overrides(services.settings, changes)
+    services.settings = _save(services.settings, changes)
     return settings_out(services.settings)
 
 
@@ -164,5 +186,5 @@ def update_llm(body: LLMSettingsIn, services: Services = Depends(get_services)):
         "llm_model": body.model,
         "llm_api_key": _key(body.api_key, s.llm_api_key, same),
     }
-    services.settings = save_overrides(services.settings, changes)
+    services.settings = _save(services.settings, changes)
     return settings_out(services.settings)

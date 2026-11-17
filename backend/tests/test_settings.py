@@ -243,3 +243,23 @@ def test_qdrant_url_without_port_uses_scheme_default(url, port, https):
         assert not remote._prefix  # a trailing "/" must not become a path prefix
     finally:
         client.close()
+
+
+def test_unhandled_error_is_json_500_with_cors(tmp_path):
+    s = Settings(
+        _env_file=None,
+        data_dir=tmp_path,
+        qdrant_in_memory=True,
+        cors_origins=["https://sim.example.com"],
+    )
+    app = create_app(s)
+
+    @app.get(f"{API}/boom")
+    def boom():
+        raise RuntimeError("boom")
+
+    with TestClient(app, raise_server_exceptions=False) as c:
+        res = c.get(f"{API}/boom", headers={"Origin": "https://sim.example.com"})
+    assert res.status_code == 500
+    assert res.json() == {"detail": "internal_error"}
+    assert res.headers["access-control-allow-origin"] == "https://sim.example.com"

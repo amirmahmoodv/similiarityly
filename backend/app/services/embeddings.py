@@ -29,8 +29,32 @@ SUGGESTED_MODELS: dict[str, list[str]] = {
 }
 
 
+# Stable codes the UI translates (under `errors`); the raw cause goes to `detail`.
+EMBEDDING_ERROR_CODES = (
+    "embedding_not_configured",  # "openai" provider, OpenAI's URL, no API key
+    "embedding_auth_failed",  # the endpoint rejected the key
+    "embedding_unreachable",  # connection refused / DNS / timeout
+    "embedding_failed",  # any other bad answer or invalid model
+    "embedding_provider_unavailable",  # fastembed is not installed
+    "embedding_model_unavailable",  # a local model could not be downloaded or loaded
+)
+
+
 class EmbeddingError(RuntimeError):
-    pass
+    def __init__(self, code: str, detail: str = ""):
+        assert code in EMBEDDING_ERROR_CODES, code
+        super().__init__(f"{code}: {detail}" if detail else code)
+        self.code = code
+        self.detail = detail
+
+
+def _is_default_openai(settings: Settings) -> bool:
+    return "api.openai.com" in settings.openai_base_url
+
+
+def openai_configured(settings: Settings) -> bool:
+    """A self-hosted compatible endpoint usually needs no key; OpenAI itself does."""
+    return bool(settings.openai_api_key) or not _is_default_openai(settings)
 
 
 class Embedder(Protocol):
@@ -42,7 +66,7 @@ class HashEmbedder:
         try:
             self.dim = int(model.rsplit("-", 1)[-1])
         except ValueError as exc:
-            raise EmbeddingError(f"invalid hash model: {model}") from exc
+            raise EmbeddingError("embedding_failed", f"invalid hash model: {model}") from exc
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         out = np.zeros((len(texts), self.dim), dtype=np.float32)
@@ -63,15 +87,22 @@ class FastEmbedEmbedder:
         try:
             from fastembed import TextEmbedding
         except ImportError as exc:
-            raise EmbeddingError("provider_unavailable:fastembed") from exc
-        self._model = TextEmbedding(model_name=model, cache_dir=str(cache_dir))
+            raise EmbeddingError("embedding_provider_unavailable", "fastembed") from exc
+        try:
+            # Downloads the model on first use; fails offline or for an unknown name.
+            self._model = TextEmbedding(model_name=model, cache_dir=str(cache_dir))
+        except Exception as exc:
+            raise EmbeddingError("embedding_model_unavailable", f"{model}: {exc}") from exc
         self._batch_size = batch_size
         # e5 models expect an instruction prefix; "query: " is the symmetric choice.
         self._prefix = "query: " if "e5" in model.lower() else ""
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         inputs = [self._prefix + t for t in texts]
-        return [v.tolist() for v in self._model.embed(inputs, batch_size=self._batch_size)]
+        try:
+            return [v.tolist() for v in self._model.embed(inputs, batch_size=self._batch_size)]
+        except Exception as exc:
+            raise EmbeddingError("embedding_failed", str(exc)) from exc
 
 
 class OpenAIEmbedder:
@@ -92,10 +123,20 @@ class OpenAIEmbedder:
             try:
                 res = self._client.post("/embeddings", json={"model": self._model, "input": batch})
                 res.raise_for_status()
+            except httpx.HTTPStatusError as exc:
+                auth = exc.response.status_code in (401, 403)
+                code = "embedding_auth_failed" if auth else "embedding_failed"
+                raise EmbeddingError(code, f"{exc} {exc.response.text[:300]}") from exc
             except httpx.HTTPError as exc:
-                raise EmbeddingError(f"embedding_request_failed: {exc}") from exc
-            data = sorted(res.json()["data"], key=lambda d: d["index"])
-            vectors.extend(d["embedding"] for d in data)
+                raise EmbeddingError(
+                    "embedding_unreachable", str(exc) or type(exc).__name__
+                ) from exc
+            try:
+                data = sorted(res.json()["data"], key=lambda d: d["index"])
+                vectors.extend(d["embedding"] for d in data)
+            except (ValueError, KeyError, TypeError) as exc:
+                detail = f"unexpected response: {res.text[:300]}"
+                raise EmbeddingError("embedding_failed", detail) from exc
         return vectors
 
 
@@ -119,16 +160,18 @@ def get_embedder(cfg: EmbeddingConfig, settings: Settings) -> Embedder:
             elif cfg.provider == "fastembed":
                 _cache[key] = FastEmbedEmbedder(cfg.model, cfg.batch_size, settings.models_dir)
             else:
+                if not openai_configured(settings):
+                    raise EmbeddingError(
+                        "embedding_not_configured", "set the embedding service in Settings"
+                    )
                 _cache[key] = OpenAIEmbedder(cfg.model, cfg.batch_size, settings)
         return _cache[key]
 
 
 def provider_infos(settings: Settings) -> list[ProviderInfo]:
-    default_openai = "api.openai.com" in settings.openai_base_url
     available = {
         "fastembed": importlib.util.find_spec("fastembed") is not None,
-        # A self-hosted compatible endpoint usually needs no key.
-        "openai": bool(settings.openai_api_key) or not default_openai,
+        "openai": openai_configured(settings),
         "hash": True,
     }
     return [

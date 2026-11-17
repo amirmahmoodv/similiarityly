@@ -138,6 +138,7 @@ class JobOut(ORM):
     total: int
     processed: int
     error: str | None
+    error_detail: str | None = None
     created_at: datetime
     finished_at: datetime | None
     repo_name: str = ""

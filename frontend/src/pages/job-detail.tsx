@@ -274,9 +274,26 @@ export function JobDetailPage() {
         </div>
         <JobProgress job={data} />
         {status === "failed" && (
-          <p role="alert" dir="auto" className="break-words text-sm text-destructive">
-            {data.error === "interrupted" ? t.job.interrupted : data.error}
-          </p>
+          <div role="alert" className="space-y-1.5 text-sm">
+            <p dir="auto" className="break-words text-destructive">
+              {data.error === "interrupted"
+                ? t.job.interrupted
+                : // A stable code; jobs from older versions stored raw text, shown as is.
+                  ((t.errors as Record<string, string>)[data.error ?? ""] ??
+                  data.error ??
+                  t.errors.unknown_error)}
+            </p>
+            {data.error_detail && (
+              <details className="text-xs text-muted-foreground">
+                <summary className="cursor-pointer select-none rounded outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                  {t.settings.details}
+                </summary>
+                <pre dir="ltr" className="mt-1 whitespace-pre-wrap break-all text-start font-mono">
+                  {data.error_detail}
+                </pre>
+              </details>
+            )}
+          </div>
         )}
         {!isIngest && status === "done" && <p className="text-sm text-uniq">{t.results.reindexDone}</p>}
       </Card>

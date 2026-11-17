@@ -89,6 +89,10 @@ class JobsRunningError(RuntimeError):
     pass
 
 
+class StorageDownError(RuntimeError):
+    """Switching Qdrant failed and the previous connection could not be restored."""
+
+
 _swap_lock = threading.Lock()
 
 
@@ -105,8 +109,12 @@ def swap_services(app, settings: Settings) -> Services:
         stop_services(old, wait=True)
         try:
             app.state.services = start_services(settings)
-        except Exception:
-            app.state.services = start_services(old.settings)
+        except Exception as exc:
+            try:
+                app.state.services = start_services(old.settings)
+            except Exception as restore_exc:
+                log.exception("could not reconnect to the previous Qdrant")
+                raise StorageDownError(str(restore_exc)) from exc
             raise
         return app.state.services
 

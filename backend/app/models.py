@@ -104,7 +104,8 @@ class Job(Entity):
     status: str = "queued"
     total: int = 0
     processed: int = 0
-    error: str | None = None
+    error: str | None = None  # stable code, translated by the UI
+    error_detail: str | None = None  # raw cause, for troubleshooting
     finished_at: datetime | None = None
 
 

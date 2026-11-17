@@ -14,10 +14,10 @@ from app.core.state import Services
 from app.models import Job, Match, Record, Repo, Source, now
 from app.schemas import RepoConfig, SimilarityConfig
 from app.services.chunking import chunk_text
-from app.services.embeddings import get_embedder
+from app.services.embeddings import EmbeddingError, get_embedder
 from app.services.normalize import normalize
-from app.services.rerank import get_reranker
-from app.services.vector_store import ChunkPoint, Hit, to_similarity
+from app.services.rerank import RerankError, get_reranker
+from app.services.vector_store import ChunkPoint, Hit, VectorConfigError, to_similarity
 
 log = logging.getLogger("similarityly.jobs")
 
@@ -116,6 +116,17 @@ def _batches(items: list, size: int):
         yield items[i : i + size]
 
 
+def job_error_code(exc: Exception) -> str:
+    """The stable code a failed job reports; the UI translates it."""
+    if isinstance(exc, EmbeddingError):
+        return exc.code
+    if isinstance(exc, VectorConfigError):
+        return "vector_config_mismatch"
+    if isinstance(exc, RerankError):
+        return "rerank_failed"
+    return "internal_error"
+
+
 def _run(services: Services, job_id: str, body) -> None:
     meta = services.meta
     job = meta.get(Job, job_id)
@@ -124,11 +135,19 @@ def _run(services: Services, job_id: str, body) -> None:
     meta.patch(Job, job_id, status="running")
     try:
         body(job)
-        status, error = "done", None
+        status, error, detail = "done", None, None
     except Exception as exc:  # surfaced to the UI through the job
         log.exception("job %s failed", job_id)
-        status, error = "failed", str(exc)[:2000]
-    meta.patch(Job, job_id, status=status, error=error, finished_at=now().isoformat())
+        status, error = "failed", job_error_code(exc)
+        detail = (getattr(exc, "detail", "") or str(exc) or type(exc).__name__)[:2000]
+    meta.patch(
+        Job,
+        job_id,
+        status=status,
+        error=error,
+        error_detail=detail,
+        finished_at=now().isoformat(),
+    )
 
 
 def run_ingest(services: Services, job_id: str) -> None:

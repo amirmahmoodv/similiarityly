@@ -68,7 +68,10 @@ export type Job = {
   status: JobStatus;
   total: number;
   processed: number;
+  /** Stable code, translated under `errors`. */
   error: string | null;
+  /** Raw cause, shown under "Technical details". */
+  error_detail?: string | null;
   created_at: string;
   finished_at: string | null;
   repo_name: string;

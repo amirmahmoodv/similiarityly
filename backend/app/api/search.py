@@ -27,7 +27,7 @@ def search_repo(repo_id: str, body: SearchRequest, services: Services = Depends(
     try:
         vector = embed_texts([body.query], cfg, services)[0]
     except EmbeddingError as exc:
-        raise HTTPException(502, "embedding_failed") from exc
+        raise HTTPException(502, exc.code) from exc
     if len(vector) != repo.vector_size:
         raise HTTPException(409, "vector_config_mismatch")
 

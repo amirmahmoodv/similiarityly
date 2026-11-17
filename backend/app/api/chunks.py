@@ -173,7 +173,7 @@ def _embed(text: str, repo: Repo, services: Services) -> list[float]:
     try:
         vector = embed_texts([text], cfg, services)[0]
     except EmbeddingError as exc:
-        raise HTTPException(502, "embedding_failed") from exc
+        raise HTTPException(502, exc.code) from exc
     if repo.vector_size is not None and len(vector) != repo.vector_size:
         raise HTTPException(409, "vector_config_mismatch")
     return vector
