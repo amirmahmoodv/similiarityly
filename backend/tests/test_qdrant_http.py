@@ -6,6 +6,7 @@ import pytest
 from app.services import qdrant_http
 from app.services.qdrant_http import (
     FIRST_READ_ATTEMPT_TIMEOUT,
+    RETRY_READ_TIMEOUT,
     ResilientTransport,
     prefer_ipv4_loopback,
 )
@@ -65,8 +66,9 @@ def test_hanging_read_is_retried_once_on_a_new_connection(monkeypatch, caplog):
     transport, calls, made = _transport(monkeypatch, [httpx.ReadTimeout, 200])
     res = _client(transport).get("/collections/sim_meta_repos/exists")
     assert res.status_code == 200
-    # First attempt capped, the retry gets the full timeout.
-    assert calls == [("GET", FIRST_READ_ATTEMPT_TIMEOUT), ("GET", 60)]
+    # Both attempts capped, so a read that hangs twice fails within an ingress timeout.
+    assert calls == [("GET", FIRST_READ_ATTEMPT_TIMEOUT), ("GET", RETRY_READ_TIMEOUT)]
+    assert FIRST_READ_ATTEMPT_TIMEOUT + RETRY_READ_TIMEOUT < 60
     assert made[0].closed and not made[1].closed  # stalled pool dropped
     assert "retrying on a new one" in caplog.text
 

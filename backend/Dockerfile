@@ -13,12 +13,16 @@ RUN uv sync --frozen --no-dev --no-install-project ${UV_EXTRAS}
 
 COPY app ./app
 
-# Run unprivileged; /data must exist and be owned before VOLUME so a fresh
-# named volume inherits the ownership.
-RUN useradd --system --uid 10001 --home-dir /app app \
+# The app runs as UID/GID 10001. /data is owned before VOLUME so a fresh named
+# volume inherits the ownership.
+RUN groupadd --system --gid 10001 app \
+    && useradd --system --uid 10001 --gid app --home-dir /app app \
     && mkdir -p /data \
     && chown -R app:app /data
-USER app
+# No USER here on purpose: a platform volume mounted on /data usually belongs to
+# root, so the entrypoint starts as root, gives /data to 10001 and then drops
+# root (setpriv) before the app runs. docker-compose starts it as 10001 directly.
+COPY --chmod=755 docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
 # The root filesystem is read-only in compose: every cache lives on /data.
 ENV PATH="/app/.venv/bin:${PATH}" \
@@ -28,5 +32,6 @@ ENV PATH="/app/.venv/bin:${PATH}" \
     HF_HOME=/data/huggingface
 VOLUME /data
 EXPOSE 8000
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 # --no-server-header: do not advertise the server software.
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-server-header"]

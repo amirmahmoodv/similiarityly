@@ -15,6 +15,20 @@ from app.core.state import start_services, stop_services
 log = logging.getLogger("similarityly")
 
 
+def configure_logging() -> None:
+    """Send the app's INFO logs to stderr next to uvicorn's.
+
+    Without a handler Python only prints WARNING and above, so setup progress
+    (e.g. "qdrant setup: ...") never reached the container log.
+    """
+    if not any(getattr(h, "_similarityly", False) for h in log.handlers):
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter("%(levelname)s:     %(name)s: %(message)s"))
+        handler._similarityly = True  # type: ignore[attr-defined]
+        log.addHandler(handler)
+    log.setLevel(logging.INFO)
+
+
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
 MIN_TOKEN_LENGTH = 16
 
@@ -57,6 +71,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         yield
         stop_services(app.state.services)
 
+    configure_logging()
     check_security(settings)
     docs = settings.enable_docs
     app = FastAPI(

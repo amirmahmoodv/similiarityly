@@ -137,9 +137,15 @@ Other hardening in place:
 HSTS only takes effect over HTTPS; terminate TLS in your reverse proxy and
 redirect plain HTTP to HTTPS there.
 
-> **Upgrading an existing Docker volume:** the API container now runs as UID
-> 10001. If the `api_data` volume was created by an older (root) image, fix its
-> ownership once: `docker compose run --rm -u root api chown -R 10001:10001 /data`.
+> **Data volume ownership:** the API always runs as UID 10001. Started with the
+> image's default user (as most platforms do), the entrypoint first gives
+> `SIM_DATA_DIR` (`/data`) to UID 10001 if a mounted volume belongs to someone
+> else, e.g. a root-owned platform volume, then drops root before the app starts.
+> This needs the `CHOWN`, `SETUID` and `SETGID` capabilities, which containers
+> have by default. `docker-compose.yml` instead starts it as `10001:10001` with no
+> capabilities; if its `api_data` volume was created by an older root image, fix
+> it once: `docker compose run --rm -u root api chown -R 10001:10001 /data`. If
+> `/data` is not writable, the container exits with a message saying how to fix it.
 
 Please report vulnerabilities privately — see [SECURITY.md](SECURITY.md).
 

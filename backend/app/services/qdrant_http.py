@@ -25,6 +25,9 @@ _LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
 _SAFE_METHODS = {"GET", "HEAD"}
 # A metadata read that has not answered by then is not coming; retry instead.
 FIRST_READ_ATTEMPT_TIMEOUT = 15.0
+# The retry is capped too, so a read that hangs twice fails in ~35 s: within a
+# typical 60 s ingress timeout, so the UI receives the error instead of a cut-off.
+RETRY_READ_TIMEOUT = 20.0
 # Errors where the connection, not the server, is the likely culprit.
 _RETRYABLE = (httpx.ReadTimeout, httpx.RemoteProtocolError, httpx.ReadError, httpx.WriteError)
 
@@ -82,7 +85,10 @@ class ResilientTransport(httpx.BaseTransport):
             # Drop every kept-alive connection: one stalled, others may be too.
             self._transport.close()
             self._transport = self._new_transport()
-            request.extensions["timeout"] = {**timeout, "read": full_read}
+            retry_read = (
+                RETRY_READ_TIMEOUT if full_read is None else min(full_read, RETRY_READ_TIMEOUT)
+            )
+            request.extensions["timeout"] = {**timeout, "read": retry_read}
             return self._transport.handle_request(request)
 
     def close(self) -> None:

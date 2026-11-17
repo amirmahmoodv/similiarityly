@@ -46,7 +46,15 @@ def connect(settings: Settings) -> tuple[QdrantClient, str]:
         return QdrantClient(":memory:"), "memory"
     if settings.qdrant_url:
         client = server_client(
-            settings.qdrant_url, settings.qdrant_api_key, timeout=settings.qdrant_timeout
+            settings.qdrant_url,
+            settings.qdrant_api_key,
+            timeout=settings.qdrant_timeout,
+            # Built exactly like the connection test's client. The default check
+            # opens a second connection from a background thread at the same time
+            # as the first real request, which is where a save to a remote server
+            # was seen to hang; it only logs a warning, and the Settings test
+            # already compares the versions.
+            check_compatibility=False,
         )
         return client, "server"
     path = settings.data_dir / "qdrant"

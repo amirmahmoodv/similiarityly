@@ -5,6 +5,7 @@ with an empty vectors config). Points are addressed by the entity id; filters
 and ordering run on payload indexes declared on each entity class.
 """
 
+import logging
 import threading
 from collections.abc import Iterable
 from typing import Any, TypeVar
@@ -13,6 +14,8 @@ from qdrant_client import QdrantClient
 from qdrant_client import models as qm
 
 from app.models import ENTITIES, Entity
+
+log = logging.getLogger("similarityly")
 
 E = TypeVar("E", bound=Entity)
 
@@ -55,6 +58,7 @@ class MetaStore:
     def _ensure(self, entity: type[Entity]) -> None:
         """Create the collection and any missing payload index (idempotent)."""
         name = self._name(entity)
+        log.info("qdrant setup: checking %s", name)
         with self._lock:
             if not self._client.collection_exists(name):
                 self._client.create_collection(name, vectors_config={})

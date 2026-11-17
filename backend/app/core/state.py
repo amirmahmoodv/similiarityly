@@ -1,7 +1,9 @@
 """Process-wide services, built once per app and shared with background jobs."""
 
 import logging
+import os
 import threading
+import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -10,6 +12,7 @@ from fastapi import Request
 from qdrant_client import QdrantClient
 
 from app.core.config import Settings
+from app.core.runtime import SettingsNotWritableError, ensure_writable
 from app.models import Job, Repo, now
 from app.schemas import RepoConfig
 from app.services.legacy_import import import_legacy_sqlite
@@ -38,8 +41,26 @@ class Services:
             self.executor.submit(fn, self, job_id)
 
 
+class DataDirNotWritableError(RuntimeError):
+    pass
+
+
+def check_data_dir(settings: Settings) -> None:
+    """Fail at startup with the fix, not later with a bare PermissionError."""
+    try:
+        ensure_writable(settings)
+    except SettingsNotWritableError as exc:
+        uid = os.getuid() if hasattr(os, "getuid") else "?"
+        raise DataDirNotWritableError(
+            f"The data folder {settings.data_dir} is not writable by this process "
+            f"(UID {uid}): {exc}. It holds settings, embedded Qdrant files and models. "
+            "If a volume is mounted there, make it writable by UID 10001, or start the "
+            "container as root once: the image then fixes the owner and drops root."
+        ) from exc
+
+
 def build_services(settings: Settings) -> Services:
-    settings.data_dir.mkdir(parents=True, exist_ok=True)
+    check_data_dir(settings)
     client, mode = connect(settings)
     lock = threading.RLock()
     prefix = settings.collection_prefix
@@ -51,17 +72,29 @@ def build_services(settings: Settings) -> Services:
     )
 
 
+def _step(started: float, what: str) -> float:
+    """Log one setup step with its duration, so a stall shows where it is."""
+    now_ = time.perf_counter()
+    log.info("qdrant setup: %s (%.2fs)", what, now_ - started)
+    return now_
+
+
 def start_services(settings: Settings) -> Services:
     """Build services and bring the store they point at up to date."""
+    t = time.perf_counter()
+    log.info("qdrant setup: connecting (%s)", settings.qdrant_mode)
     services = build_services(settings)
+    t = _step(t, "metadata collections ready")
     try:
         import_legacy_sqlite(settings.legacy_sqlite_path, services.meta)
+        t = _step(t, "legacy import checked")
 
         # Jobs are in-process; anything unfinished at startup died with the old process.
         for job in services.meta.all(Job, {"status": ["queued", "running"]}):
             services.meta.patch(
                 Job, job.id, status="failed", error="interrupted", finished_at=now().isoformat()
             )
+        t = _step(t, "unfinished jobs closed")
 
         # Bring every existing vector collection up to the current search setup
         # (payload indexes) and flag any whose shape no longer matches its repo.
@@ -74,6 +107,7 @@ def start_services(settings: Settings) -> Services:
             except VectorConfigError as exc:
                 log.warning("repo %s flagged for reindex: %s", repo.id, exc)
                 services.meta.patch(Repo, repo.id, needs_reindex=True)
+        _step(t, "repository collections checked")
     except Exception:
         services.client.close()
         raise

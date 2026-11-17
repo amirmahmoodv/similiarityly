@@ -24,7 +24,10 @@ services:
     build: ./backend
     restart: unless-stopped
     # Runs as UID 10001 and needs no Linux capabilities. The image is read-only;
-    # only /data (volume) and /tmp (uploads being parsed) are writable.
+    # only /data (volume) and /tmp (uploads being parsed) are writable. Without
+    # `user`, the image starts as root to fix /data ownership and then drops it,
+    # which needs capabilities this hardened setup removes.
+    user: "10001:10001"
     security_opt:
       - no-new-privileges:true
     cap_drop:

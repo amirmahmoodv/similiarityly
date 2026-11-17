@@ -279,7 +279,7 @@ def test_server_client_uses_the_configured_timeout(monkeypatch, tmp_path):
     s = Settings(_env_file=None, data_dir=tmp_path, default_qdrant_url="https://q.example.com")
     assert s.qdrant_timeout == 60  # default: room for a remote server's setup calls
     vector_store.connect(s)
-    assert captured == {"url": "https://q.example.com", "timeout": 60}
+    assert captured["url"] == "https://q.example.com" and captured["timeout"] == 60
 
     monkeypatch.setenv("SIM_QDRANT_TIMEOUT", "120")
     s = Settings(_env_file=None, data_dir=tmp_path, default_qdrant_url="https://q.example.com")
@@ -409,3 +409,57 @@ def test_failed_check_blocks_the_save_with_the_step(client, monkeypatch, setting
     assert res.json()["detail"]["code"] == "qdrant_timeout"
     assert res.json()["detail"]["message"].startswith("collection_lookup:")
     assert client.get(f"{API}/settings").json()["qdrant"]["mode"] == "memory"
+
+
+def test_live_qdrant_client_skips_the_background_version_check(monkeypatch, tmp_path):
+    """Built like the connection test's client: no second, concurrent connection."""
+    from app.services import vector_store
+
+    captured = {}
+    monkeypatch.setattr(
+        vector_store, "server_client", lambda url, key, **kw: captured.update(kw) or object()
+    )
+    vector_store.connect(
+        Settings(_env_file=None, data_dir=tmp_path, default_qdrant_url="https://q.example.com")
+    )
+    assert captured["check_compatibility"] is False
+
+
+def test_qdrant_setup_progress_is_logged(tmp_path, caplog):
+    import logging
+
+    from app.core.state import start_services, stop_services
+
+    caplog.set_level(logging.INFO, logger="similarityly")
+    services = start_services(Settings(_env_file=None, data_dir=tmp_path, qdrant_in_memory=True))
+    stop_services(services)
+    for line in (
+        "qdrant setup: connecting (memory)",
+        "qdrant setup: checking sim_meta_repos",
+        "qdrant setup: metadata collections ready",
+        "qdrant setup: repository collections checked",
+    ):
+        assert line in caplog.text, line
+
+
+def test_app_logs_info_to_the_container_log(tmp_path):
+    import logging
+
+    from app.main import configure_logging
+
+    create_app(Settings(_env_file=None, data_dir=tmp_path, qdrant_in_memory=True))
+    configure_logging()  # idempotent: no duplicate handlers
+    log = logging.getLogger("similarityly")
+    ours = [h for h in log.handlers if getattr(h, "_similarityly", False)]
+    assert len(ours) == 1 and log.getEffectiveLevel() == logging.INFO
+
+
+def test_unwritable_data_dir_fails_startup_with_the_fix(tmp_path):
+    """The Runflare case: a root-owned volume on /data."""
+    from app.core.state import DataDirNotWritableError, start_services
+
+    blocker = tmp_path / "file-not-dir"
+    blocker.write_text("x", encoding="utf-8")
+    settings = Settings(_env_file=None, data_dir=blocker / "data", qdrant_in_memory=True)
+    with pytest.raises(DataDirNotWritableError, match="UID 10001"):
+        start_services(settings)
