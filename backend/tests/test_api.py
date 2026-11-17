@@ -283,6 +283,34 @@ def test_browse_chunks(client):
     only = client.get(url, params={"source_id": second["items"][0]["source_id"]}).json()
     assert only["total"] == 1 and only["items"][0]["record_id"] == second["items"][0]["record_id"]
 
+    # Text search: matching chunks only, grouped by record, most matches first.
+    ingest_lines(client, repo["id"], ["Annual Report"])
+    found = client.get(url, params={"q": " واژه1 "}).json()
+    assert found["total"] == 1 and not found["truncated"]
+    hit = found["items"][0]
+    assert hit["record_id"] == first["record_id"] and hit["chunk_count"] == first["chunk_count"]
+    assert hit["match_count"] == len(hit["chunks"]) >= 2
+    assert all("واژه1" in c["text"] for c in hit["chunks"])
+    assert [c["chunk_index"] for c in hit["chunks"]] == sorted(
+        c["chunk_index"] for c in hit["chunks"]
+    )
+    assert client.get(url, params={"q": "annual report"}).json()["total"] == 1  # other casing
+    assert client.get(url, params={"q": "report annual"}).json()["total"] == 0  # a phrase
+    assert client.get(url, params={"q": "منبع"}).json()["total"] == 1
+    assert (
+        client.get(url, params={"q": "منبع", "source_id": first["source_id"]}).json()["total"] == 0
+    )
+    assert client.get(url, params={"q": "بررسی"}).json()["total"] == 0  # check-only: not indexed
+    assert client.get(url, params={"q": "نیست"}).json() == {
+        "items": [],
+        "total": 0,
+        "page": 1,
+        "page_size": 20,
+        "truncated": False,
+    }
+    assert client.get(url, params={"q": "   "}).json()["total"] == 4  # blank: no search
+    assert client.get(url, params={"q": "x" * 201}).status_code == 422
+
 
 def test_edit_delete_and_add_chunks(client):
     repo = make_repo(client)

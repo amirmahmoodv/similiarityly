@@ -14,7 +14,7 @@ log = logging.getLogger("similarityly")
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
-    # Values saved from the Settings page override the SIM_ env vars.
+    # Connections come from the Settings page (settings.json), not the environment.
     settings = apply_overrides(settings or Settings())
 
     @asynccontextmanager

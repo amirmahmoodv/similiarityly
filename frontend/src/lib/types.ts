@@ -132,6 +132,8 @@ export type LLMProvider = "openai" | "anthropic";
 
 export type AppSettings = {
   qdrant: { mode: QdrantMode; url: string; api_key_set: boolean };
+  /** OpenAI-compatible endpoint used by the "openai" embedding provider; "" = OpenAI. */
+  embeddings: { base_url: string; api_key_set: boolean };
   llm: { provider: LLMProvider; base_url: string; model: string; api_key_set: boolean };
 };
 
@@ -139,6 +141,11 @@ export type AppSettings = {
 export type QdrantSettingsInput = {
   mode: "server" | "embedded";
   url: string;
+  api_key?: string | null;
+};
+
+export type EmbeddingsSettingsInput = {
+  base_url: string;
   api_key?: string | null;
 };
 
@@ -190,10 +197,19 @@ export type RecordChunks = {
   source_name: string;
   chunk_count: number;
   chunks: Chunk[];
+  /** Set by a text search: `chunks` then holds matching chunks only. */
+  match_count: number | null;
 };
 
 /** `total` counts records, not chunks. */
-export type ChunkPage = { items: RecordChunks[]; total: number; page: number; page_size: number };
+export type ChunkPage = {
+  items: RecordChunks[];
+  total: number;
+  page: number;
+  page_size: number;
+  /** A search matched more chunks than the server scans. */
+  truncated: boolean;
+};
 
 export type IndexStatus = {
   searchable: boolean;

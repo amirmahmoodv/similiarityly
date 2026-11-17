@@ -1,6 +1,7 @@
 import * as React from "react";
 import { motion, useReducedMotion } from "motion/react";
 import { AlertCircle } from "lucide-react";
+import { SignalTrace } from "@/components/hud/signal-trace";
 import { HudSpinner } from "@/components/hud/spinner";
 import { AnimatedButton } from "@/components/motion";
 import { useI18n } from "@/i18n";
@@ -68,10 +69,7 @@ export function PageHeader({
     <header className="mb-6 flex flex-wrap items-start justify-between gap-4">
       <div className="min-w-0">
         <h1 className="hud-title hud-glow text-2xl font-bold tracking-tight">{title}</h1>
-        <div
-          aria-hidden="true"
-          className="hud-rule mt-2 h-0.5 w-28 bg-linear-to-r from-primary to-transparent rtl:bg-linear-to-l"
-        />
+        <SignalTrace className="w-72 max-w-full" />
         {subtitle && <p className="mt-2 text-sm text-muted-foreground">{subtitle}</p>}
       </div>
       {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}

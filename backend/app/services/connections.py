@@ -67,6 +67,23 @@ def _anthropic_models(base_url: str, api_key: str | None) -> list[str]:
         client.close()
 
 
+def test_embeddings(base_url: str, api_key: str | None) -> ConnectionTest:
+    """Lists the endpoint's models, like the LLM check, with its own error codes."""
+    start = time.perf_counter()
+
+    def fail(code: str, exc: Exception) -> ConnectionTest:
+        return ConnectionTest(ok=False, latency_ms=_ms(start), error=code, detail=str(exc)[:500])
+
+    try:
+        models = _openai_models(base_url, api_key)
+    except httpx.HTTPStatusError as exc:
+        auth = exc.response.status_code in (401, 403)
+        return fail("embeddings_auth_failed" if auth else "embeddings_http_error", exc)
+    except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
+        return fail("embeddings_unreachable", exc)
+    return ConnectionTest(ok=True, latency_ms=_ms(start), models=sorted(models))
+
+
 def test_llm(provider: str, base_url: str, api_key: str | None, model: str) -> ConnectionTest:
     """Lists the endpoint's models: proves reachability and auth without spending tokens."""
     start = time.perf_counter()

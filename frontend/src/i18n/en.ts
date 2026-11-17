@@ -289,6 +289,14 @@ export const en: Dictionary = {
     empty: "Nothing has been indexed in this repository yet.",
     emptyBody: "After you load and add data, the stored chunks appear here.",
     pages: "Chunk pages",
+    search: "Search chunk text",
+    searchPlaceholder: "Part of a chunk's text…",
+    clearSearch: "Clear search",
+    matching: "matching",
+    noMatches: "No chunk contains this text.",
+    noMatchesBody: "Try a different phrase, or set the source to “All sources”.",
+    truncated: (limit) =>
+      `Too many results; only the first ${limit} matching chunks were scanned. Use a more specific phrase.`,
     textLabel: "Chunk text",
     editLabel: (index) => `Edit chunk ${index}`,
     deleteLabel: (index) => `Delete chunk ${index}`,
@@ -303,7 +311,7 @@ export const en: Dictionary = {
   },
   settings: {
     title: "Settings",
-    subtitle: "Connections to the Qdrant vector database and a language model",
+    subtitle: "Connections to the Qdrant vector database, the embedding service and a language model",
     test: "Test connection",
     apiKey: "API key",
     apiKeySaved: "A key is saved for this address; leave blank to keep it. Changing the address requires entering the key again.",
@@ -315,7 +323,7 @@ export const en: Dictionary = {
     failed: "Connection failed",
     latency: "Response time",
     details: "Technical details",
-    envNote: "Values saved here take precedence over the SIM_ environment variables.",
+    envNote: "These connections are stored on the server and set only here; environment variables do not change them.",
     qdrant: {
       title: "Qdrant",
       hint: "The vector database that stores every repository, source and result.",
@@ -335,6 +343,12 @@ export const en: Dictionary = {
       confirmBody:
         "The app will reconnect to the new database. Data in the current one is not deleted, but is unavailable until you switch back.",
       confirm: "Connect",
+    },
+    embeddings: {
+      title: "Embedding service",
+      hint: "OpenAI-compatible endpoint (OpenAI, Ollama, TEI, vLLM, …) used by repositories with the OpenAI embedding provider.",
+      baseUrl: "API URL",
+      baseUrlHint: "Empty = OpenAI (https://api.openai.com/v1). A self-hosted endpoint usually needs no key.",
     },
     llm: {
       title: "Language model (LLM)",
@@ -357,6 +371,9 @@ export const en: Dictionary = {
       llm_unreachable: "The language model service is unreachable. Check the URL.",
       llm_auth_failed: "The API key was rejected or is missing.",
       llm_http_error: "The language model service returned an error.",
+      embeddings_unreachable: "The embedding service is unreachable. Check the URL.",
+      embeddings_auth_failed: "The embedding service rejected the API key, or one is required.",
+      embeddings_http_error: "The embedding service returned an error.",
     },
   },
   errors: {

@@ -213,6 +213,48 @@ class VectorStore:
                 if offset is None:
                     return out
 
+    def find_text(
+        self, repo_id: str, query: str, source_id: str | None, limit: int
+    ) -> tuple[list[Hit], bool]:
+        """Chunks whose text contains `query`, unordered, at most `limit`.
+
+        The flag says more matched than were returned. A substring scan, not a
+        vector search; Latin letters also match in their other common casings.
+        """
+        name = self._name(repo_id)
+        variants = {query, query.lower(), query.upper(), query.title(), query.capitalize()}
+        must: list = [
+            qm.Filter(
+                should=[
+                    qm.FieldCondition(key="text", match=qm.MatchText(text=v))
+                    for v in sorted(variants)
+                ]
+            )
+        ]
+        if source_id is not None:
+            must.append(qm.FieldCondition(key="source_id", match=qm.MatchValue(value=source_id)))
+        needle = query.casefold()
+        out: list[Hit] = []
+        offset = None
+        with self._lock:
+            if not self._client.collection_exists(name):
+                return [], False
+            while True:
+                points, offset = self._client.scroll(
+                    name,
+                    scroll_filter=qm.Filter(must=must),
+                    limit=256,
+                    offset=offset,
+                    with_payload=True,
+                    with_vectors=False,
+                )
+                # Embedded Qdrant matches word by word; keep whole-phrase hits only.
+                out.extend(h for h in map(_hit, points) if needle in h.text.casefold())
+                if len(out) > limit:
+                    return out[:limit], True
+                if offset is None:
+                    return out, False
+
     def get_chunk(self, repo_id: str, chunk_id: str) -> Hit | None:
         name = self._name(repo_id)
         with self._lock:

@@ -3,6 +3,7 @@ import type {
   Chunk,
   ChunkPage,
   ConnectionTest,
+  EmbeddingsSettingsInput,
   LLMSettingsInput,
   QdrantSettingsInput,
   IndexStatus,
@@ -124,10 +125,12 @@ export const api = {
   indexStatus: (id: string) => request<IndexStatus>(`/repos/${id}/index`),
   search: (id: string, query: string, top_k: number) =>
     request<SearchHit[]>(`/repos/${id}/search`, json("POST", { query, top_k })),
-  chunks: (id: string, sourceId: string | null, page: number, pageSize: number) =>
-    request<ChunkPage>(
-      `/repos/${id}/chunks?page=${page}&page_size=${pageSize}${sourceId ? `&source_id=${sourceId}` : ""}`,
-    ),
+  chunks: (id: string, sourceId: string | null, query: string, page: number, pageSize: number) => {
+    const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
+    if (sourceId) params.set("source_id", sourceId);
+    if (query) params.set("q", query);
+    return request<ChunkPage>(`/repos/${id}/chunks?${params}`);
+  },
   recordChunks: (recordId: string, offset: number, limit: number) =>
     request<Chunk[]>(`/records/${recordId}/chunks?offset=${offset}&limit=${limit}`),
   addChunk: (recordId: string, text: string) =>
@@ -190,6 +193,10 @@ export const api = {
     request<ConnectionTest>("/settings/qdrant/test", json("POST", body)),
   saveQdrant: (body: QdrantSettingsInput) =>
     request<AppSettings>("/settings/qdrant", json("PUT", body)),
+  testEmbeddings: (body: EmbeddingsSettingsInput) =>
+    request<ConnectionTest>("/settings/embeddings/test", json("POST", body)),
+  saveEmbeddings: (body: EmbeddingsSettingsInput) =>
+    request<AppSettings>("/settings/embeddings", json("PUT", body)),
   testLLM: (body: LLMSettingsInput) =>
     request<ConnectionTest>("/settings/llm/test", json("POST", body)),
   saveLLM: (body: LLMSettingsInput) => request<AppSettings>("/settings/llm", json("PUT", body)),

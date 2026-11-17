@@ -264,6 +264,9 @@ class RecordChunks(BaseModel):
     source_name: str = ""
     chunk_count: int  # chunks stored for the record; `chunks` may be a prefix
     chunks: list[ChunkOut]
+    # Set when the listing was searched: `chunks` then holds matching chunks
+    # only (the first few), and this counts all of the record's matches.
+    match_count: int | None = None
 
 
 class ChunkPage(BaseModel):
@@ -271,6 +274,7 @@ class ChunkPage(BaseModel):
     total: int  # records
     page: int
     page_size: int
+    truncated: bool = False  # a search matched more chunks than were scanned
 
 
 class IndexStatus(BaseModel):
@@ -307,8 +311,14 @@ class LLMSettingsOut(BaseModel):
     api_key_set: bool
 
 
+class EmbeddingsSettingsOut(BaseModel):
+    base_url: str
+    api_key_set: bool
+
+
 class SettingsOut(BaseModel):
     qdrant: QdrantSettingsOut
+    embeddings: EmbeddingsSettingsOut
     llm: LLMSettingsOut
 
 
@@ -336,6 +346,20 @@ class LLMSettingsIn(BaseModel):
     def _valid_url(self):
         self.base_url = self.base_url.strip()
         self.model = self.model.strip()
+        if self.base_url and not self.base_url.startswith(("http://", "https://")):
+            raise ValueError("base_url must start with http:// or https://")
+        return self
+
+
+class EmbeddingsSettingsIn(BaseModel):
+    """The OpenAI-compatible endpoint used by the "openai" embedding provider."""
+
+    base_url: str = Field("", max_length=2000)  # empty = OpenAI's default
+    api_key: str | None = Field(None, max_length=2000)
+
+    @model_validator(mode="after")
+    def _valid_url(self):
+        self.base_url = self.base_url.strip()
         if self.base_url and not self.base_url.startswith(("http://", "https://")):
             raise ValueError("base_url must start with http:// or https://")
         return self

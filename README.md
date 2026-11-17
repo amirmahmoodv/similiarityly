@@ -16,7 +16,7 @@ digit normalization, ZWNJ handling, RTL UI) and works just as well for English.
 ## Quick start (Docker)
 
 ```bash
-cp backend/.env.example .env      # optional: edit values
+cp .env.example .env              # optional: access token, ports
 docker compose up -d --build
 ```
 
@@ -54,20 +54,27 @@ cd frontend && npm run lint && npm run typecheck && npm test && npm run build
 
 ## Configuration
 
-All API settings are environment variables prefixed with `SIM_` — see
-[`backend/.env.example`](backend/.env.example). The Qdrant and LLM connections
-can also be changed from the **Settings** page; those values are saved to
-`<SIM_DATA_DIR>/settings.json` (mode `0600`) and override the environment.
+Connections are set on the **Settings** page: the Qdrant server, the
+OpenAI-compatible embedding service and the language model. They are saved to
+`<SIM_DATA_DIR>/settings.json` (mode `0600`). With nothing saved, the API uses
+`SIM_DEFAULT_QDRANT_URL` (embedded on-disk Qdrant if unset; Docker: the bundled
+`qdrant` service) and OpenAI's default endpoint.
+
+Only process-level settings stay in the environment — see
+[`.env.example`](.env.example) for Docker and
+[`backend/.env.example`](backend/.env.example) for running the API directly:
 
 | Variable | Purpose |
 | --- | --- |
 | `SIM_API_TOKEN` | Shared access token. When set, every `/api/` call needs `Authorization: Bearer <token>`; the UI asks for it once. |
+| `SIM_DEFAULT_QDRANT_URL` | Qdrant server used until one is saved in Settings (compose sets it to the bundled service). Empty = embedded. |
 | `SIM_DATA_DIR` | Where runtime settings, embedded Qdrant files and downloaded models live. |
-| `SIM_QDRANT_URL` / `SIM_QDRANT_API_KEY` | Qdrant server. Empty URL = embedded on-disk Qdrant (single process, dev only). |
-| `SIM_OPENAI_BASE_URL` / `SIM_OPENAI_API_KEY` | OpenAI-compatible embeddings endpoint. |
-| `SIM_LLM_*` | Chat LLM connection (`openai`-compatible or `anthropic`). |
 | `SIM_CORS_ORIGINS` | JSON list of allowed browser origins when the UI is served from another origin. |
 | `SIM_MAX_UPLOAD_MB` | Upload size limit (keep in step with `client_max_body_size` in `frontend/nginx.conf`). |
+| `WEB_BIND` / `WEB_PORT` / `API_PORT` / `QDRANT_PORT` | Docker host interface and ports. |
+
+The old connection variables (`SIM_QDRANT_URL`, `SIM_QDRANT_API_KEY`,
+`SIM_OPENAI_*`, `SIM_LLM_*`) are **ignored**; set those values in Settings.
 
 ## Security
 

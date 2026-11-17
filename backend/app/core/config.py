@@ -1,17 +1,70 @@
 from pathlib import Path
 from typing import Literal
 
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import model_validator
+from pydantic.fields import FieldInfo
+from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
+
+# Connections are configured on the Settings page (saved to settings.json), never
+# through the environment: SIM_ variables for these fields are ignored on purpose.
+UI_ONLY_FIELDS = frozenset(
+    {
+        "qdrant_url",
+        "qdrant_api_key",
+        "openai_base_url",
+        "openai_api_key",
+        "llm_provider",
+        "llm_base_url",
+        "llm_api_key",
+        "llm_model",
+    }
+)
+
+
+class _WithoutUIFields(PydanticBaseSettingsSource):
+    """Wraps an env/.env source and drops the UI-only fields from what it returns."""
+
+    def __init__(self, inner: PydanticBaseSettingsSource):
+        super().__init__(inner.settings_cls)
+        self._inner = inner
+
+    def get_field_value(self, field: FieldInfo, field_name: str) -> tuple[None, str, bool]:
+        return None, field_name, False
+
+    def __call__(self) -> dict:
+        return {k: v for k, v in self._inner().items() if k not in UI_ONLY_FIELDS}
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_prefix="SIM_", extra="ignore")
 
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls,
+        init_settings,
+        env_settings,
+        dotenv_settings,
+        file_secret_settings,
+    ):
+        # Constructor arguments (tests) still set any field.
+        return (
+            init_settings,
+            _WithoutUIFields(env_settings),
+            _WithoutUIFields(dotenv_settings),
+            file_secret_settings,
+        )
+
     data_dir: Path = Path("data")
+
+    # Qdrant server used until one is saved on the Settings page (docker-compose
+    # points it at the bundled service). Empty = embedded on-disk Qdrant.
+    default_qdrant_url: str | None = None
 
     # Empty url -> embedded on-disk Qdrant under data_dir (dev only, single process).
     qdrant_url: str | None = None
     qdrant_api_key: str | None = None
+    # Dev/test only: a throwaway in-memory Qdrant. Saving a Qdrant in the UI turns it off.
     qdrant_in_memory: bool = False
     collection_prefix: str = "sim_"
 
@@ -41,9 +94,16 @@ class Settings(BaseSettings):
     # after the fact for anything above it.
     match_store_floor: float = 0.3
 
+    @model_validator(mode="after")
+    def _apply_default_qdrant(self):
+        # Saved UI values are applied later with model_copy, so they still win.
+        if self.qdrant_url is None and self.default_qdrant_url:
+            self.qdrant_url = self.default_qdrant_url
+        return self
+
     @property
     def runtime_settings_path(self) -> Path:
-        """Connection settings saved from the UI; they override the SIM_ env vars."""
+        """Connection settings saved from the Settings page (the only place they are set)."""
         return self.data_dir / "settings.json"
 
     @property

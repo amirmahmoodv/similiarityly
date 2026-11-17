@@ -2,7 +2,8 @@
 
 They live in `<data_dir>/settings.json`, not in Qdrant: the Qdrant connection
 itself is one of them, and metadata is stored in Qdrant. Saved values override
-the SIM_ environment variables; keys never saved keep coming from the env.
+the code defaults; connection SIM_ environment variables are ignored (see
+`UI_ONLY_FIELDS` in config.py).
 """
 
 import json
@@ -20,6 +21,8 @@ EDITABLE = {
     "qdrant_url",
     "qdrant_api_key",
     "qdrant_in_memory",
+    "openai_base_url",
+    "openai_api_key",
     "llm_provider",
     "llm_base_url",
     "llm_api_key",

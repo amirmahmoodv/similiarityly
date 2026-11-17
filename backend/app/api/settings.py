@@ -6,13 +6,15 @@ from app.core.runtime import save_overrides
 from app.core.state import JobsRunningError, Services, get_services, swap_services
 from app.schemas import (
     ConnectionTest,
+    EmbeddingsSettingsIn,
+    EmbeddingsSettingsOut,
     LLMSettingsIn,
     LLMSettingsOut,
     QdrantSettingsIn,
     QdrantSettingsOut,
     SettingsOut,
 )
-from app.services.connections import test_llm, test_qdrant
+from app.services.connections import OPENAI_DEFAULT_BASE_URL, test_embeddings, test_llm, test_qdrant
 
 router = APIRouter(tags=["settings"])
 
@@ -24,6 +26,11 @@ def settings_out(s: Settings) -> SettingsOut:
             url=s.qdrant_url or "",
             api_key_set=bool(s.qdrant_api_key),
         ),
+        embeddings=EmbeddingsSettingsOut(
+            # The stored default is OpenAI's URL; the UI shows that as "empty = default".
+            base_url="" if _is_default_openai(s.openai_base_url) else s.openai_base_url,
+            api_key_set=bool(s.openai_api_key),
+        ),
         llm=LLMSettingsOut(
             provider=s.llm_provider,
             base_url=s.llm_base_url,
@@ -31,6 +38,10 @@ def settings_out(s: Settings) -> SettingsOut:
             api_key_set=bool(s.llm_api_key),
         ),
     )
+
+
+def _is_default_openai(url: str) -> bool:
+    return url.rstrip("/") == OPENAI_DEFAULT_BASE_URL
 
 
 def _key(new: str | None, saved: str | None, same_target: bool) -> str | None:
@@ -102,6 +113,35 @@ async def update_qdrant(
     saved = save_overrides(current, changes)
     request.app.state.services.settings = saved
     return settings_out(saved)
+
+
+# ---- Embeddings (OpenAI-compatible endpoint) --------------------------------
+
+
+def _embeddings_url(base_url: str) -> str:
+    return base_url or OPENAI_DEFAULT_BASE_URL
+
+
+def _same_embeddings(base_url: str, s: Settings) -> bool:
+    return _embeddings_url(base_url).rstrip("/") == s.openai_base_url.rstrip("/")
+
+
+@router.post("/settings/embeddings/test", response_model=ConnectionTest)
+async def check_embeddings(body: EmbeddingsSettingsIn, services: Services = Depends(get_services)):
+    s = services.settings
+    api_key = _key(body.api_key, s.openai_api_key, _same_embeddings(body.base_url, s))
+    return await run_in_threadpool(test_embeddings, _embeddings_url(body.base_url), api_key)
+
+
+@router.put("/settings/embeddings", response_model=SettingsOut)
+def update_embeddings(body: EmbeddingsSettingsIn, services: Services = Depends(get_services)):
+    s = services.settings
+    changes = {
+        "openai_base_url": _embeddings_url(body.base_url),
+        "openai_api_key": _key(body.api_key, s.openai_api_key, _same_embeddings(body.base_url, s)),
+    }
+    services.settings = save_overrides(services.settings, changes)
+    return settings_out(services.settings)
 
 
 # ---- LLM -------------------------------------------------------------------

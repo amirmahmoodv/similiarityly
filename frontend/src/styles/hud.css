@@ -322,6 +322,21 @@ a.hud-panel:hover {
   transform-origin: left;
 }
 
+/* The title rule is a signal trace (SignalTrace draws it frame by frame, also
+   under reduced motion: it is small, slow and never flashes). It fades out
+   toward its end edge. */
+.hud-signal {
+  overflow: hidden;
+  mask-image: linear-gradient(to right, #000 45%, transparent);
+}
+[dir="rtl"] .hud-signal {
+  mask-image: linear-gradient(to left, #000 45%, transparent);
+}
+.hud-signal > svg {
+  display: block;
+  filter: drop-shadow(0 0 3px var(--primary));
+}
+
 /* Page title wipes in from its start edge. */
 .hud-title {
   animation: hud-wipe 560ms var(--motion-ease-standard) backwards;

@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bot, Check, CircleCheck, CircleX, PlugZap, TriangleAlert, Waypoints } from "lucide-react";
+import { Binary, Bot, Check, CircleCheck, CircleX, PlugZap, TriangleAlert, Waypoints } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import * as React from "react";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
@@ -20,6 +20,7 @@ import { fadeUpVariants } from "@/lib/motion";
 import type {
   AppSettings,
   ConnectionTest,
+  EmbeddingsSettingsInput,
   LLMProvider,
   LLMSettingsInput,
   QdrantSettingsInput,
@@ -394,6 +395,119 @@ function QdrantSection({ settings }: { settings: AppSettings["qdrant"] }) {
   );
 }
 
+// ---- Embeddings -------------------------------------------------------------
+
+function EmbeddingsSection({ settings }: { settings: AppSettings["embeddings"] }) {
+  const { t, n } = useI18n();
+  const queryClient = useQueryClient();
+  const [baseUrl, setBaseUrl] = React.useState(settings.base_url);
+  const [key, setKey] = React.useState<KeyDraft>({ value: "", clear: false });
+  const [saved, flashSaved] = useFlash();
+
+  const input: EmbeddingsSettingsInput = { base_url: baseUrl.trim(), api_key: keyPayload(key) };
+  const urlInvalid = input.base_url !== "" && !/^https?:\/\/\S+$/.test(input.base_url);
+
+  const test = useMutation({ mutationFn: api.testEmbeddings });
+  const save = useMutation({
+    mutationFn: api.saveEmbeddings,
+    onSuccess: (next) => {
+      queryClient.setQueryData(["settings"], next);
+      // Whether the "openai" provider is available depends on these values.
+      queryClient.invalidateQueries({ queryKey: ["meta"] });
+      setKey({ value: "", clear: false });
+      flashSaved();
+    },
+  });
+
+  const resetFeedback = () => {
+    test.reset();
+    save.reset();
+  };
+
+  const dirty = input.base_url !== settings.base_url || key.clear || key.value.trim() !== "";
+
+  const submit = (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!urlInvalid && dirty) save.mutate(input);
+  };
+
+  return (
+    <SectionCard
+      icon={<Binary className="size-5" aria-hidden="true" />}
+      title={t.settings.embeddings.title}
+      hint={t.settings.embeddings.hint}
+    >
+      <form onSubmit={submit} noValidate className="space-y-4">
+        <Field
+          label={t.settings.embeddings.baseUrl}
+          hint={t.settings.embeddings.baseUrlHint}
+          error={urlInvalid ? t.errors.validation_error : undefined}
+        >
+          {(ids) => (
+            <TextInput
+              {...ids}
+              dir="ltr"
+              inputMode="url"
+              autoComplete="off"
+              spellCheck={false}
+              placeholder={DEFAULT_BASE_URL.openai}
+              aria-invalid={urlInvalid || undefined}
+              value={baseUrl}
+              onChange={(e) => {
+                setBaseUrl(e.target.value);
+                resetFeedback();
+              }}
+            />
+          )}
+        </Field>
+        <ApiKeyField
+          saved={settings.api_key_set}
+          draft={key}
+          onChange={(next) => {
+            setKey(next);
+            resetFeedback();
+          }}
+        />
+
+        <AnimatePresence mode="wait" initial={false}>
+          {test.data && (
+            <TestResult key="result" result={test.data}>
+              {test.data.ok && (
+                <span className="text-muted-foreground">
+                  {t.settings.llm.models}:{" "}
+                  <span className="nums text-foreground">
+                    {n(test.data.models.length)} {t.units.models}
+                  </span>
+                </span>
+              )}
+            </TestResult>
+          )}
+        </AnimatePresence>
+        {test.isError && <ErrorNote error={test.error} />}
+        {save.isError && <ErrorNote error={save.error} />}
+
+        <div className="flex flex-wrap items-center justify-end gap-3 border-t pt-4">
+          <span className="me-auto">
+            <SavedNote show={saved} />
+          </span>
+          <Button
+            variant="secondary"
+            loading={test.isPending}
+            disabled={urlInvalid}
+            onClick={() => test.mutate(input)}
+          >
+            <PlugZap className="size-4" aria-hidden="true" />
+            {t.settings.test}
+          </Button>
+          <Button type="submit" loading={save.isPending} disabled={urlInvalid || !dirty}>
+            {t.common.save}
+          </Button>
+        </div>
+      </form>
+    </SectionCard>
+  );
+}
+
 // ---- LLM --------------------------------------------------------------------
 
 function LLMSection({ settings }: { settings: AppSettings["llm"] }) {
@@ -595,12 +709,14 @@ export function SettingsPage() {
         <>
           <div className="grid items-start gap-4 lg:grid-cols-2">
             <QdrantSection settings={settings.data.qdrant} />
+            <EmbeddingsSection settings={settings.data.embeddings} />
             <LLMSection settings={settings.data.llm} />
           </div>
           <p className="mt-4 text-xs text-muted-foreground">{t.settings.envNote}</p>
         </>
       ) : (
         <div className="grid gap-4 lg:grid-cols-2">
+          <Skeleton className="h-80 rounded-2xl" />
           <Skeleton className="h-80 rounded-2xl" />
           <Skeleton className="h-80 rounded-2xl" />
         </div>

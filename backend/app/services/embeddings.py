@@ -104,7 +104,14 @@ _lock = threading.Lock()
 
 
 def get_embedder(cfg: EmbeddingConfig, settings: Settings) -> Embedder:
-    key = (cfg.provider, cfg.model, cfg.batch_size, settings.openai_base_url)
+    # The endpoint and key are part of the key: both can change from the Settings page.
+    key = (
+        cfg.provider,
+        cfg.model,
+        cfg.batch_size,
+        settings.openai_base_url,
+        settings.openai_api_key,
+    )
     with _lock:
         if key not in _cache:
             if cfg.provider == "hash":

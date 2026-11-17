@@ -9,25 +9,29 @@ services:
     volumes:
       - qdrant_data:/qdrant/storage
     ports:
+      # For running the API outside Docker against this Qdrant.
       - "127.0.0.1:${QDRANT_PORT:-6333}:6333"
+    healthcheck:
+      # The image has no curl/wget; bash's /dev/tcp is enough to hit /readyz.
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/6333 && printf 'GET /readyz HTTP/1.0\r\n\r\n' >&3 && grep -q ' 200 ' <&3"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
 
   api:
     build: ./backend
     restart: unless-stopped
     depends_on:
-      - qdrant
+      qdrant:
+        condition: service_healthy
     environment:
-      SIM_QDRANT_URL: http://qdrant:6333
-      SIM_OPENAI_BASE_URL: ${SIM_OPENAI_BASE_URL:-https://api.openai.com/v1}
-      SIM_OPENAI_API_KEY: ${SIM_OPENAI_API_KEY:-}
-      SIM_LLM_PROVIDER: ${SIM_LLM_PROVIDER:-openai}
-      SIM_LLM_BASE_URL: ${SIM_LLM_BASE_URL:-}
-      SIM_LLM_API_KEY: ${SIM_LLM_API_KEY:-}
-      SIM_LLM_MODEL: ${SIM_LLM_MODEL:-}
+      # Bundled Qdrant, used until another one is saved on the Settings page.
+      # All connections (Qdrant, embedding service, LLM) are configured there.
+      SIM_DEFAULT_QDRANT_URL: http://qdrant:6333
       # Strongly recommended whenever the web port is reachable from other machines.
       SIM_API_TOKEN: ${SIM_API_TOKEN:-}
     volumes:
-      # SQLite metadata + downloaded embedding models
+      # settings.json (connections saved from the UI) + downloaded embedding models
       - api_data:/data
     ports:
       - "127.0.0.1:${API_PORT:-8000}:8000"

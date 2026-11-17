@@ -15,12 +15,17 @@ router = APIRouter(tags=["chunks"])
 # Chunks returned inline per record; the rest is fetched per record on demand,
 # so one long document cannot blow up a page.
 PREVIEW_CHUNKS = 5
+# A text search scans at most this many matching chunks, and shows at most
+# MATCH_CHUNKS of them per record.
+SEARCH_SCAN_LIMIT = 5000
+MATCH_CHUNKS = 20
 
 
 @router.get("/repos/{repo_id}/chunks", response_model=ChunkPage)
 def browse_chunks(
     repo_id: str,
     source_id: str | None = None,
+    q: str | None = Query(None, max_length=200),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     services: Services = Depends(get_services),
@@ -28,7 +33,8 @@ def browse_chunks(
     """What is stored in the repo's index, read back from Qdrant.
 
     Paged by record (oldest source first, then row order) with each record's
-    chunks grouped under it, so a split document reads in sequence.
+    chunks grouped under it, so a split document reads in sequence. With `q`,
+    only records with a chunk containing that text, and only those chunks.
     """
     repo = get_repo(repo_id, services)
     sources = [
@@ -36,6 +42,12 @@ def browse_chunks(
         for s in services.meta.find(Source, {"repo_id": repo.id}, order_by="created_ts", limit=1000)
         if s.indexed and (source_id is None or s.id == source_id)
     ]
+    names = {s.id: s.name for s in sources}
+
+    q = (q or "").strip()
+    if q:
+        return _search_chunks(repo.id, q, source_id, names, page, page_size, services)
+
     total = sum(s.record_count for s in sources)
 
     # Walk the sources to the one holding the page's first record.
@@ -62,7 +74,6 @@ def browse_chunks(
     for c in services.store.chunks(repo.id, list(by_record), 0, PREVIEW_CHUNKS):
         by_record[c.record_id].append(ChunkOut(id=c.id, chunk_index=c.chunk_index, text=c.text))
 
-    names = {s.id: s.name for s in sources}
     items = [
         RecordChunks(
             record_id=r.id,
@@ -75,6 +86,51 @@ def browse_chunks(
         for r in records
     ]
     return ChunkPage(items=items, total=total, page=page, page_size=page_size)
+
+
+def _search_chunks(
+    repo_id: str,
+    q: str,
+    source_id: str | None,
+    names: dict[str, str],
+    page: int,
+    page_size: int,
+    services: Services,
+) -> ChunkPage:
+    """Records with chunks containing `q`, most matching chunks first."""
+    hits, truncated = services.store.find_text(repo_id, q, source_id, SEARCH_SCAN_LIMIT)
+    matches: dict[str, list[Hit]] = {}
+    for h in hits:
+        if h.source_id in names:
+            matches.setdefault(h.record_id, []).append(h)
+    rank = {sid: i for i, sid in enumerate(names)}
+    order = sorted(
+        matches, key=lambda rid: (-len(matches[rid]), rank[matches[rid][0].source_id], rid)
+    )
+    start = (page - 1) * page_size
+    items = []
+    for rid in order[start : start + page_size]:
+        record = services.meta.get(Record, rid)
+        if record is None:
+            continue
+        found = sorted(matches[rid], key=lambda h: h.chunk_index)
+        items.append(
+            RecordChunks(
+                record_id=record.id,
+                ordinal=record.ordinal,
+                source_id=record.source_id,
+                source_name=names.get(record.source_id, ""),
+                chunk_count=record.chunk_count,
+                chunks=[
+                    ChunkOut(id=h.id, chunk_index=h.chunk_index, text=h.text)
+                    for h in found[:MATCH_CHUNKS]
+                ],
+                match_count=len(found),
+            )
+        )
+    return ChunkPage(
+        items=items, total=len(order), page=page, page_size=page_size, truncated=truncated
+    )
 
 
 @router.get("/records/{record_id}/chunks", response_model=list[ChunkOut])
