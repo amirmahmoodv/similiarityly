@@ -366,6 +366,15 @@ class EmbeddingsSettingsIn(BaseModel):
         return self
 
 
+class ConnectionStep(BaseModel):
+    """One timed request of a connection check."""
+
+    name: str  # stable id, translated by the UI
+    ok: bool
+    ms: int
+    error: str | None = None
+
+
 class ConnectionTest(BaseModel):
     ok: bool
     latency_ms: int = 0
@@ -373,5 +382,7 @@ class ConnectionTest(BaseModel):
     detail: str | None = None
     version: str | None = None  # Qdrant
     collections: int | None = None  # Qdrant
+    client_version: str | None = None  # Qdrant: the app's qdrant-client
+    steps: list[ConnectionStep] = []  # Qdrant: each request, timed
     models: list[str] = []  # LLM
     model_found: bool | None = None  # LLM; None when no model was given

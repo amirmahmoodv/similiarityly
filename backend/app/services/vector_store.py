@@ -10,6 +10,7 @@ from qdrant_client import QdrantClient
 from qdrant_client import models as qm
 
 from app.core.config import Settings
+from app.services.qdrant_http import ResilientTransport, prefer_ipv4_loopback
 
 _DISTANCE = {
     "cosine": qm.Distance.COSINE,
@@ -30,9 +31,12 @@ def server_client(url: str, api_key: str | None, **kwargs: Any) -> QdrantClient:
     time out behind a reverse proxy. Use the scheme's standard port instead, as
     browsers and curl do. A trailing "/" is dropped; it would become a "//" prefix.
     """
-    url = url.strip().rstrip("/")
+    # Requests go through ResilientTransport (app/services/qdrant_http.py): no
+    # Windows localhost IPv6 delay, and one fresh-connection retry for a hanging read.
+    url = prefer_ipv4_loopback(url.strip().rstrip("/"))
     parts = urlsplit(url)
     port = parts.port or (443 if parts.scheme == "https" else 80)
+    kwargs.setdefault("transport", ResilientTransport(parts.hostname or ""))
     return QdrantClient(url=url, port=port, api_key=api_key or None, **kwargs)
 
 

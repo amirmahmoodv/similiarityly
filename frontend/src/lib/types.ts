@@ -167,6 +167,10 @@ export type ConnectionTest = {
   detail: string | null;
   version: string | null;
   collections: number | null;
+  /** The app's qdrant-client version, to compare with the server's. */
+  client_version?: string | null;
+  /** Qdrant: each request the check made, timed. */
+  steps?: { name: string; ok: boolean; ms: number; error: string | null }[];
   models: string[];
   model_found: boolean | null;
 };

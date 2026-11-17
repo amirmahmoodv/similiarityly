@@ -109,7 +109,11 @@ def check_qdrant(body: QdrantSettingsIn, services: Services = Depends(get_servic
     if body.mode == "embedded":  # local files, nothing to reach
         return ConnectionTest(ok=True)
     s = services.settings
-    return test_qdrant(body.url, _key(body.api_key, s.qdrant_api_key, _same_qdrant(body.url, s)))
+    return test_qdrant(
+        body.url,
+        _key(body.api_key, s.qdrant_api_key, _same_qdrant(body.url, s)),
+        s.collection_prefix,
+    )
 
 
 @router.put("/settings/qdrant", response_model=SettingsOut)
@@ -125,7 +129,7 @@ async def update_qdrant(
     }
     # Refuse to save a server we cannot reach: the app would come up without storage.
     if body.mode == "server":
-        result = await run_in_threadpool(test_qdrant, body.url, api_key)
+        result = await run_in_threadpool(test_qdrant, body.url, api_key, current.collection_prefix)
         if not result.ok:
             raise _failure(502, result.error or "qdrant_unreachable", result.detail)
 

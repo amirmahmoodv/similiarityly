@@ -343,6 +343,18 @@ export const en: Dictionary = {
       confirmBody:
         "The app will reconnect to the new database. Data in the current one is not deleted, but is unavailable until you switch back.",
       confirm: "Connect",
+      stepsTitle: "Requests made (the same ones saving makes)",
+      steps: {
+        version: "Server version",
+        list_collections: "List collections",
+        collection_lookup: "Collection lookup (same connection)",
+        new_connection_lookup: "Collection lookup (new connection)",
+      } as Record<string, string>,
+      clientVersion: "App client version",
+      stepOk: "Succeeded",
+      stepFailed: "Failed",
+      versionMismatch:
+        "The server and the app's Qdrant client are more than one minor version apart; some requests may fail. Upgrade the Qdrant server.",
     },
     embeddings: {
       title: "Embedding service",
@@ -367,6 +379,8 @@ export const en: Dictionary = {
     },
     errors: {
       qdrant_unreachable: "The Qdrant server is unreachable. Check the URL and port.",
+      qdrant_timeout:
+        "Qdrant did not answer in time. The failed step below shows where; a step that fails only on the same connection points to a proxy between the app and Qdrant.",
       qdrant_auth_failed: "Qdrant rejected the API key.",
       llm_unreachable: "The language model service is unreachable. Check the URL.",
       llm_auth_failed: "The API key was rejected or is missing.",
@@ -420,6 +434,7 @@ export const en: Dictionary = {
     name_required: "Enter a name.",
     jobs_running: "The Qdrant connection cannot change while jobs are running.",
     qdrant_unreachable: "The Qdrant server is unreachable; settings were not saved.",
+    qdrant_timeout: "Qdrant did not answer in time; settings were not saved. Run the connection test to see which request hangs.",
     qdrant_auth_failed: "Qdrant rejected the API key; settings were not saved.",
   },
 };

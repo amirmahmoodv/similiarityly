@@ -4,12 +4,13 @@ A check never raises: it returns a result with a stable `error` code the UI
 translates, plus the raw `detail` for troubleshooting.
 """
 
+import importlib.metadata
 import time
 
 import anthropic
 import httpx
 
-from app.schemas import ConnectionTest
+from app.schemas import ConnectionStep, ConnectionTest
 from app.services.vector_store import server_client
 
 OPENAI_DEFAULT_BASE_URL = "https://api.openai.com/v1"
@@ -20,31 +21,103 @@ def _ms(start: float) -> int:
     return round((time.perf_counter() - start) * 1000)
 
 
-def test_qdrant(url: str, api_key: str | None) -> ConnectionTest:
+QDRANT_STEPS = ("version", "list_collections", "collection_lookup", "new_connection_lookup")
+
+
+def _is_timeout(exc: BaseException) -> bool:
+    seen: BaseException | None = exc
+    while seen is not None:
+        if isinstance(seen, (httpx.TimeoutException, TimeoutError)):
+            return True
+        if "timed out" in str(seen):
+            return True
+        seen = seen.__cause__ or seen.__context__
+    return False
+
+
+def _is_auth(exc: BaseException) -> bool:
+    text = str(exc)
+    return getattr(exc, "status_code", None) in (401, 403) or any(
+        s in text for s in ("401", "403", "Unauthorized", "Forbidden")
+    )
+
+
+def _client_version() -> str | None:
+    try:
+        return importlib.metadata.version("qdrant-client")
+    except importlib.metadata.PackageNotFoundError:
+        return None
+
+
+def test_qdrant(url: str, api_key: str | None, prefix: str = "sim_") -> ConnectionTest:
+    """Run the same requests switching to this server makes, each timed.
+
+    Saving connects with a version check and then looks up and creates
+    collections over one kept-alive connection. Checking only a single list call
+    let a server pass here and then hang on save, so every step is repeated:
+    the version, a listing, a collection lookup on the same connection, and the
+    same lookup on a brand-new connection (which tells a broken keep-alive path
+    apart from a server that does not answer at all). Nothing is written.
+    """
     start = time.perf_counter()
-    client = None
+    steps: list[ConnectionStep] = []
+    first_failure: tuple[str, str, BaseException] | None = None
+    version: str | None = None
+    collections: int | None = None
+    lookup = f"{prefix}meta_repos"
+
+    def run(name: str, fn):
+        nonlocal first_failure
+        t = time.perf_counter()
+        try:
+            result = fn()
+        except Exception as exc:
+            steps.append(ConnectionStep(name=name, ok=False, ms=_ms(t), error=str(exc)[:300]))
+            if first_failure is None:
+                first_failure = (name, str(exc), exc)
+            return None
+        steps.append(ConnectionStep(name=name, ok=True, ms=_ms(t)))
+        return result
+
+    clients = []
     try:
         client = server_client(url, api_key, timeout=int(_TIMEOUT), check_compatibility=False)
-        collections = client.get_collections().collections
-        version = None
-        try:
-            version = client.info().version
-        except Exception:  # older servers have no root info endpoint
-            pass
-        return ConnectionTest(
-            ok=True, latency_ms=_ms(start), version=version, collections=len(collections)
-        )
-    except Exception as exc:
-        text = str(exc)
-        code = (
-            "qdrant_auth_failed"
-            if "401" in text or "403" in text or "Unauthorized" in text
-            else "qdrant_unreachable"
-        )
-        return ConnectionTest(ok=False, latency_ms=_ms(start), error=code, detail=text[:500])
+        clients.append(client)
+        info = run("version", client.info)
+        version = getattr(info, "version", None)
+        listed = run("list_collections", client.get_collections)
+        if listed is not None:
+            collections = len(listed.collections)
+        # Keep going only past timeouts: the later steps then show where the path
+        # breaks. A refused connection or a rejected key would just repeat itself.
+        if first_failure is None or _is_timeout(first_failure[2]):
+            run("collection_lookup", lambda: client.collection_exists(lookup))
+            fresh = server_client(url, api_key, timeout=int(_TIMEOUT), check_compatibility=False)
+            clients.append(fresh)
+            run("new_connection_lookup", lambda: fresh.collection_exists(lookup))
+    except Exception as exc:  # e.g. an invalid URL: the client cannot even be built
+        first_failure = first_failure or ("client", str(exc), exc)
     finally:
-        if client is not None:
-            client.close()
+        for c in clients:
+            c.close()
+
+    common = {
+        "latency_ms": _ms(start),
+        "version": version,
+        "collections": collections,
+        "client_version": _client_version(),
+        "steps": steps,
+    }
+    if first_failure is None:
+        return ConnectionTest(ok=True, **common)
+    name, text, exc = first_failure
+    if _is_auth(exc):
+        code = "qdrant_auth_failed"
+    elif _is_timeout(exc):
+        code = "qdrant_timeout"
+    else:
+        code = "qdrant_unreachable"
+    return ConnectionTest(ok=False, error=code, detail=f"{name}: {text}"[:500], **common)
 
 
 def _openai_models(base_url: str, api_key: str | None) -> list[str]:

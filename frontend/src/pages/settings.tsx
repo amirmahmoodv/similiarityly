@@ -17,6 +17,7 @@ import { useI18n } from "@/i18n";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { fadeUpVariants } from "@/lib/motion";
+import { versionsTooFarApart } from "@/lib/versions";
 import type {
   AppSettings,
   ConnectionTest,
@@ -342,6 +343,43 @@ function QdrantSection({ settings }: { settings: AppSettings["qdrant"] }) {
                     {n(test.data.collections)} {t.units.collections}
                   </span>
                 </span>
+              )}
+              {test.data.client_version && (
+                <span className="text-muted-foreground">
+                  {t.settings.qdrant.clientVersion}:{" "}
+                  <bdi dir="ltr" className="text-foreground">
+                    {test.data.client_version}
+                  </bdi>
+                </span>
+              )}
+              {versionsTooFarApart(test.data.version, test.data.client_version) && (
+                <span className="flex basis-full items-start gap-1.5 text-sim">
+                  <TriangleAlert className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+                  {t.settings.qdrant.versionMismatch}
+                </span>
+              )}
+              {test.data.steps && test.data.steps.length > 0 && (
+                <div className="basis-full">
+                  <p className="mb-1 text-xs text-muted-foreground">{t.settings.qdrant.stepsTitle}</p>
+                  <ul className="space-y-1 text-xs">
+                    {test.data.steps.map((step) => (
+                      <li key={step.name} className="flex items-start gap-2">
+                        {step.ok ? (
+                          <CircleCheck className="mt-0.5 size-3.5 shrink-0 text-uniq" aria-hidden="true" />
+                        ) : (
+                          <CircleX className="mt-0.5 size-3.5 shrink-0 text-destructive" aria-hidden="true" />
+                        )}
+                        <span className="min-w-0 flex-1">
+                          <span className="sr-only">{step.ok ? t.settings.qdrant.stepOk : t.settings.qdrant.stepFailed}: </span>
+                          {t.settings.qdrant.steps[step.name] ?? step.name}
+                        </span>
+                        <span className="nums shrink-0 text-muted-foreground">
+                          {n(step.ms)} {t.units.ms}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
               )}
             </TestResult>
           )}

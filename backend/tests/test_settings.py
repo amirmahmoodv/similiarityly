@@ -295,3 +295,117 @@ def test_server_client_passes_timeout_to_qdrant_client():
         assert client._client._timeout == 60
     finally:
         client.close()
+
+
+# ---- Qdrant connection check: mirrors what saving does ---------------------------
+
+
+class _FakeQdrant:
+    """Stands in for QdrantClient; `hang` names calls that time out."""
+
+    instances: list["_FakeQdrant"] = []
+
+    def __init__(self, hang=(), deny=False):
+        self.hang, self.deny, self.closed = set(hang), deny, False
+        _FakeQdrant.instances.append(self)
+
+    def _call(self, name, result):
+        import httpx
+
+        if self.deny:
+            raise RuntimeError("Unexpected Response: 403 (Forbidden)")
+        if name in self.hang:
+            raise httpx.ReadTimeout("The read operation timed out")
+        return result
+
+    def info(self):
+        import types
+
+        return self._call("info", types.SimpleNamespace(version="1.12.5"))
+
+    def get_collections(self):
+        import types
+
+        return self._call("get_collections", types.SimpleNamespace(collections=[1, 2, 3]))
+
+    def collection_exists(self, name):
+        assert name == "sim_meta_repos"
+        return self._call("collection_exists", False)
+
+    def close(self):
+        self.closed = True
+
+
+def _patch_clients(monkeypatch, *clients):
+    from app.services import connections
+
+    queue = list(clients)
+    _FakeQdrant.instances = []
+    monkeypatch.setattr(connections, "server_client", lambda *a, **kw: queue.pop(0))
+
+
+def test_qdrant_check_runs_every_step_of_a_save(monkeypatch):
+    from app.services.connections import QDRANT_STEPS, test_qdrant
+
+    _patch_clients(monkeypatch, _FakeQdrant(), _FakeQdrant())
+    result = test_qdrant("https://q.example.com", "k")
+    assert result.ok and result.version == "1.12.5" and result.collections == 3
+    assert [s.name for s in result.steps] == list(QDRANT_STEPS)
+    assert all(s.ok for s in result.steps)
+    assert result.client_version  # shown next to the server version
+    assert all(c.closed for c in _FakeQdrant.instances)
+
+
+def test_qdrant_check_pinpoints_a_hanging_lookup(monkeypatch):
+    """The production failure: reads pass, the collection lookup never answers."""
+    from app.services.connections import test_qdrant
+
+    _patch_clients(
+        monkeypatch,
+        _FakeQdrant(hang={"collection_exists"}),
+        _FakeQdrant(hang={"collection_exists"}),
+    )
+    result = test_qdrant("https://q.example.com", "k")
+    assert not result.ok and result.error == "qdrant_timeout"
+    assert result.detail.startswith("collection_lookup:")
+    status = {s.name: s.ok for s in result.steps}
+    assert status == {
+        "version": True,
+        "list_collections": True,
+        "collection_lookup": False,
+        "new_connection_lookup": False,
+    }
+
+
+def test_qdrant_check_tells_keep_alive_problems_apart(monkeypatch):
+    from app.services.connections import test_qdrant
+
+    _patch_clients(monkeypatch, _FakeQdrant(hang={"collection_exists"}), _FakeQdrant())
+    result = test_qdrant("https://q.example.com", "k")
+    status = {s.name: s.ok for s in result.steps}
+    assert status["collection_lookup"] is False and status["new_connection_lookup"] is True
+    assert result.error == "qdrant_timeout"
+
+
+def test_qdrant_check_stops_after_a_rejected_key(monkeypatch):
+    from app.services.connections import test_qdrant
+
+    _patch_clients(monkeypatch, _FakeQdrant(deny=True))
+    result = test_qdrant("https://q.example.com", "bad")
+    assert result.error == "qdrant_auth_failed"
+    assert [s.name for s in result.steps] == ["version", "list_collections"]
+
+
+def test_failed_check_blocks_the_save_with_the_step(client, monkeypatch, settings):
+    _patch_clients(
+        monkeypatch,
+        _FakeQdrant(hang={"collection_exists"}),
+        _FakeQdrant(hang={"collection_exists"}),
+    )
+    res = client.put(
+        f"{API}/settings/qdrant", json={"mode": "server", "url": "https://q.example.com"}
+    )
+    assert res.status_code == 502
+    assert res.json()["detail"]["code"] == "qdrant_timeout"
+    assert res.json()["detail"]["message"].startswith("collection_lookup:")
+    assert client.get(f"{API}/settings").json()["qdrant"]["mode"] == "memory"

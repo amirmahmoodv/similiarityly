@@ -267,7 +267,7 @@ def test_unwritable_settings_return_a_code_not_a_crash(client, monkeypatch, path
 def test_qdrant_switch_is_refused_before_anything_changes_when_unwritable(client, monkeypatch):
     from app.api import settings as settings_api
 
-    monkeypatch.setattr(settings_api, "test_qdrant", lambda url, key: ConnectionTest(ok=True))
+    monkeypatch.setattr(settings_api, "test_qdrant", lambda *args: ConnectionTest(ok=True))
 
     def deny(settings):
         raise runtime.SettingsNotWritableError("read-only")
@@ -288,7 +288,7 @@ def test_qdrant_switch_failure_keeps_the_old_connection(client, monkeypatch):
     from app.api import settings as settings_api
     from app.core import state
 
-    monkeypatch.setattr(settings_api, "test_qdrant", lambda url, key: ConnectionTest(ok=True))
+    monkeypatch.setattr(settings_api, "test_qdrant", lambda *args: ConnectionTest(ok=True))
     real_start = state.start_services
 
     def start(settings):
@@ -317,7 +317,7 @@ def test_read_only_qdrant_key_is_reported_as_write_denied(client, monkeypatch, c
     from app.api import settings as settings_api
     from app.core import state
 
-    monkeypatch.setattr(settings_api, "test_qdrant", lambda url, key: ConnectionTest(ok=True))
+    monkeypatch.setattr(settings_api, "test_qdrant", lambda *args: ConnectionTest(ok=True))
     real_start = state.start_services
 
     def start(settings):
@@ -351,7 +351,7 @@ def test_qdrant_switch_that_also_cannot_restore_reports_storage_unavailable(clie
     from app.api import settings as settings_api
     from app.core import state
 
-    monkeypatch.setattr(settings_api, "test_qdrant", lambda url, key: ConnectionTest(ok=True))
+    monkeypatch.setattr(settings_api, "test_qdrant", lambda *args: ConnectionTest(ok=True))
 
     def start(settings):
         raise RuntimeError("everything is down")
@@ -405,7 +405,8 @@ def _backend_codes() -> set[str]:
         # ConnectionTest error codes (translated under settings.errors).
         codes |= set(
             re.findall(
-                r'"((?:qdrant|llm|embeddings)_(?:unreachable|auth_failed|http_error))"', text
+                r'"((?:qdrant|llm|embeddings)_(?:unreachable|auth_failed|http_error|timeout))"',
+                text,
             )
         )
     return codes
