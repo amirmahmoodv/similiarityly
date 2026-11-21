@@ -1,5 +1,5 @@
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowRight, ChevronDown, Download, SearchX } from "lucide-react";
+import { ArrowRight, ChevronDown, Download, FileSpreadsheet, SearchX } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import * as React from "react";
 import { Link, useParams } from "react-router-dom";
@@ -17,6 +17,7 @@ import {
   StatusBadge,
 } from "@/components/ui/primitives";
 import { Stat } from "@/components/ui/stat";
+import { ExportDialog } from "@/features/jobs/export-dialog";
 import { JobProgress, JobStatusLabel } from "@/features/jobs/job-row";
 import { useI18n } from "@/i18n";
 import { api, ApiError } from "@/lib/api";
@@ -33,10 +34,11 @@ function statusOf(score: number, summary: JobSummary): RecordStatus {
   return score >= summary.similar_threshold ? "similar" : "unique";
 }
 
-function ExportButton({ jobId }: { jobId: string }) {
+function ExportButton({ jobId, filter }: { jobId: string; filter: Filter }) {
   const { t, err } = useI18n();
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<unknown>(null);
+  const [excelOpen, setExcelOpen] = React.useState(false);
   const run = async () => {
     setBusy(true);
     setError(null);
@@ -50,10 +52,22 @@ function ExportButton({ jobId }: { jobId: string }) {
   };
   return (
     <div className="flex flex-col items-end gap-1">
-      <Button variant="secondary" loading={busy} onClick={run}>
-        {!busy && <Download className="size-4" aria-hidden="true" />}
-        {t.results.export}
-      </Button>
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        <Button variant="secondary" loading={busy} onClick={run}>
+          {!busy && <Download className="size-4" aria-hidden="true" />}
+          {t.results.export}
+        </Button>
+        <Button variant="secondary" onClick={() => setExcelOpen(true)}>
+          <FileSpreadsheet className="size-4" aria-hidden="true" />
+          {t.results.exportExcel}
+        </Button>
+      </div>
+      <ExportDialog
+        jobId={jobId}
+        initialStatus={filter}
+        open={excelOpen}
+        onOpenChange={setExcelOpen}
+      />
       {error != null && (
         <p role="alert" className="text-xs text-destructive">
           {err(error)}
@@ -265,7 +279,7 @@ export function JobDetailPage() {
         subtitle={isIngest ? `${data.source_name} · ${t.mode[data.mode].title}` : undefined}
         actions={
           isIngest && status === "done" ? (
-            <ExportButton jobId={data.id} />
+            <ExportButton jobId={data.id} filter={filter} />
           ) : undefined
         }
       />

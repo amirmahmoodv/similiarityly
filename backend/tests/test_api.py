@@ -290,6 +290,79 @@ def test_label_column_names_records_matches_search_hits_and_export(client):
     assert plain[0]["label"] == ""
 
 
+def _sheet_rows(res, sheet=0):
+    import io
+
+    from openpyxl import load_workbook
+
+    assert res.status_code == 200, res.text
+    ws = load_workbook(io.BytesIO(res.content)).worksheets[sheet]
+    head, *rows = [[c.value for c in row] for row in ws.iter_rows()]
+    return ws, head, [dict(zip(head, row, strict=True)) for row in rows]
+
+
+def test_xlsx_export_layouts_candidate_count_and_labels(client):
+    repo = make_repo(client, top_k=5, similar_threshold=0.5, duplicate_threshold=0.95)
+    csv_bytes = (
+        "کد,شرح\n"
+        "A-1,نصب دوربین مداربسته\n"
+        "A-2,نصب دوربین مدار بسته\n"
+        "A-3,نصب دوربین مداربسته\n"
+        "A-4,گزارش مالی فصل بهار\n"
+    ).encode()
+    job = client.post(
+        f"{API}/repos/{repo['id']}/ingest",
+        data={"input_kind": "file", "options": '{"label_column": "کد"}'},
+        files={"file": ("items.csv", csv_bytes, "text/csv")},
+    ).json()
+    url = f"{API}/jobs/{job['id']}/export.xlsx"
+
+    # Wide: one row per record, candidates pivoted into columns.
+    ws, head, rows = _sheet_rows(client.get(url, params={"layout": "wide", "candidates": 2}))
+    assert ws.title == "Results" and list(ws.tables) == ["Results"]
+    assert [r["Label"] for r in rows] == ["A-1", "A-2", "A-3", "A-4"]
+    assert "Candidate 2 label" in head and "Candidate 3 label" not in head
+    assert rows[0]["Candidates"] == 0 and rows[0]["Candidate 1 label"] is None
+    third = rows[2]  # identical to A-1, close to A-2
+    assert third["Candidates"] == 2 and third["Status"] == "Duplicate"
+    assert (third["Candidate 1 label"], third["Candidate 2 label"]) == ("A-1", "A-2")
+    assert third["Candidate 1 similarity"] > third["Candidate 2 similarity"]
+    assert third["Candidate 1 text"] == "نصب دوربین مداربسته"
+    # Numbers, so Excel can aggregate them (1.0 reads back as the int 1).
+    assert isinstance(third["Top similarity"], int | float)
+    assert isinstance(third["Candidate 2 similarity"], float)
+
+    # The count caps the columns; the "Candidates" figure stays the full count.
+    _, head, rows = _sheet_rows(client.get(url, params={"candidates": 1}))
+    assert "Candidate 2 label" not in head and rows[2]["Candidates"] == 2
+
+    # Long: one row per record x candidate; a record without candidates keeps one row.
+    _, head, rows = _sheet_rows(client.get(url, params={"layout": "long", "candidates": 5}))
+    of_third = [r for r in rows if r["Label"] == "A-3"]
+    assert [(r["Candidate rank"], r["Candidate label"]) for r in of_third] == [
+        (1, "A-1"),
+        (2, "A-2"),
+    ]
+    assert of_third[0]["Candidate status"] == "Duplicate"
+    assert of_third[0]["Candidate repository"] == repo["name"]
+    assert of_third[0]["Candidate source"] == "items.csv"
+    assert [r["Candidate rank"] for r in rows if r["Label"] == "A-1"] == [None]
+
+    # Status filter and Persian headers; the summary counts the whole check.
+    res = client.get(url, params={"status": "duplicate", "lang": "fa"})
+    ws, head, rows = _sheet_rows(res)
+    assert ws.sheet_view.rightToLeft and "برچسب نامزد ۱" in head
+    assert [r["برچسب"] for r in rows] == ["A-3"] and rows[0]["وضعیت"] == "تکراری"
+    summary = ws.parent.worksheets[1]
+    assert summary["B1"].value == repo["name"] and summary["B2"].value == "items.csv"
+    assert summary["B5"].value == 4  # records checked
+    assert summary["B9"].value == 1  # records in this file
+
+    assert client.get(url, params={"candidates": 0}).status_code == 422
+    assert client.get(url, params={"layout": "pivot"}).status_code == 422
+    assert client.get(f"{API}/jobs/nope/export.xlsx").status_code == 404
+
+
 def test_validation_and_errors(client):
     repo = make_repo(client)
     assert client.post(f"{API}/repos", json={"name": repo["name"]}).status_code == 409

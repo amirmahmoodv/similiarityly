@@ -140,7 +140,35 @@ export type IngestInput = {
     }
 );
 
-type RepoPatch = Partial<{ name: string; description: string; config: RepoConfig }>;
+/** "wide": candidates pivoted into columns. "long": one row per candidate. */
+export type ExportLayout = "wide" | "long";
+
+export type XlsxExportOptions = {
+  layout: ExportLayout;
+  /** Candidates written per record (1..100). */
+  candidates: number;
+  status: RecordStatus | "all";
+  /** Language of the sheet's headers and status names. */
+  lang: "fa" | "en";
+};
+
+/** Fetched (not a plain link) so the access token goes with it. */
+async function download(path: string, filename: string): Promise<void> {
+  const res = await send(path);
+  if (!res.ok) {
+    const code =
+      res.status === 401 ? "unauthorized" : res.status === 422 ? "validation_error" : "unknown_error";
+    throw new ApiError(res.status, code);
+  }
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+type RepoPatch =Partial<{ name: string; description: string; config: RepoConfig }>;
 
 export const api = {
   meta: () => request<Meta>("/meta"),
@@ -207,16 +235,19 @@ export const api = {
       `/jobs/${id}/records?status=${status}&page=${page}&page_size=${pageSize}&sort=score`,
     ),
   matches: (recordId: string) => request<Match[]>(`/records/${recordId}/matches`),
-  /** Fetched (not a plain link) so the access token goes with it. */
-  exportCsv: async (jobId: string) => {
-    const res = await send(`/jobs/${encodeURIComponent(jobId)}/export.csv`);
-    if (!res.ok) throw new ApiError(res.status, res.status === 401 ? "unauthorized" : "unknown_error");
-    const url = URL.createObjectURL(await res.blob());
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `similarity-${jobId}.csv`;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  exportCsv: (jobId: string) =>
+    download(`/jobs/${encodeURIComponent(jobId)}/export.csv`, `similarity-${jobId}.csv`),
+  exportXlsx: (jobId: string, options: XlsxExportOptions) => {
+    const params = new URLSearchParams({
+      layout: options.layout,
+      candidates: String(options.candidates),
+      status: options.status,
+      lang: options.lang,
+    });
+    return download(
+      `/jobs/${encodeURIComponent(jobId)}/export.xlsx?${params}`,
+      `similarity-${jobId}.xlsx`,
+    );
   },
 
   settings: () => request<AppSettings>("/settings"),

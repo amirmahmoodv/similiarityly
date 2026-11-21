@@ -9,6 +9,7 @@ from app.api.repos import job_out
 from app.core.state import Services, get_services
 from app.models import Job, Match, Record, Repo, Source
 from app.schemas import JobOut, JobSummary, MatchOut, RecordOut, RecordPage, RepoConfig
+from app.services.export_xlsx import MAX_CANDIDATES, ExportInfo, Lang, Layout, build_workbook
 from app.services.meta_store import Ranges
 
 router = APIRouter(tags=["jobs"])
@@ -194,4 +195,55 @@ def export_job(job_id: str, services: Services = Depends(get_services)):
         content="﻿" + buf.getvalue(),
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": f'attachment; filename="similarity-{job.id}.csv"'},
+    )
+
+
+@router.get("/jobs/{job_id}/export.xlsx")
+def export_job_xlsx(
+    job_id: str,
+    layout: Layout = "wide",
+    candidates: int = Query(3, ge=1, le=MAX_CANDIDATES),
+    status: StatusFilter = "all",
+    lang: Lang = "en",
+    services: Services = Depends(get_services),
+):
+    """Records with their top `candidates` matched records and labels.
+    `layout` pivots the candidates into columns ("wide") or gives each its own
+    row ("long"); see services/export_xlsx.py."""
+    job = _job(job_id, services)
+    similar, duplicate = _thresholds(job, services)
+    where = {"source_id": job.source_id}
+    records = services.meta.all(Record, where) if job.source_id else []
+    matches = services.meta.all(Match, where) if job.source_id else []
+
+    counts = {"duplicate": 0, "similar": 0, "unique": 0}
+    for r in records:
+        counts[_status(r.max_score, similar, duplicate)] += 1
+    if status != "all":
+        records = [r for r in records if _status(r.max_score, similar, duplicate) == status]
+    records.sort(key=lambda r: r.ordinal)
+
+    meta = services.meta
+    repos = meta.get_many(Repo, [job.repo_id, *(m.matched_repo_id for m in matches)])
+    sources = meta.get_many(Source, [job.source_id or "", *(m.matched_source_id for m in matches)])
+    names = {e.id: e.name for e in (*repos.values(), *sources.values())}
+    content = build_workbook(
+        records,
+        matches,
+        ExportInfo(
+            repo_name=names.get(job.repo_id, ""),
+            source_name=names.get(job.source_id or "", ""),
+            similar=similar,
+            duplicate=duplicate,
+            counts=counts,
+        ),
+        names,
+        layout=layout,
+        limit=candidates,
+        lang=lang,
+    )
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="similarity-{job.id}.xlsx"'},
     )

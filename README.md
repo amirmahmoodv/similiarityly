@@ -11,7 +11,7 @@ digit normalization, ZWNJ handling, RTL UI) and works just as well for English.
   n-gram hash
 - **Optional second stage:** cross-encoder re-ranking (`bge-reranker-v2-m3`)
 - **Storage:** [Qdrant](https://qdrant.tech) for both vectors and metadata
-- **UI:** React + Vite, Persian and English, results export to CSV
+- **UI:** React + Vite, Persian and English, results export to CSV or Excel (top match candidates with their labels, pivoted into columns or one row per candidate)
 
 ## Quick start (Docker)
 

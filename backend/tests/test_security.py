@@ -138,6 +138,26 @@ def test_export_neutralizes_formulas(client):
     assert texts["5"] == "plain text"
 
 
+def test_xlsx_export_keeps_formulas_as_text(client):
+    from openpyxl import load_workbook
+
+    repo = client.post(f"{API}/repos", json={"name": "xlsx"}).json()
+    lines = ['=HYPERLINK("http://evil","x")', '=HYPERLINK("http://evil","x")', "bell\x07 text"]
+    job = client.post(
+        f"{API}/repos/{repo['id']}/ingest",
+        data={"input_kind": "text", "split": "lines", "text": "\n".join(lines)},
+    ).json()
+    for layout in ("wide", "long"):
+        res = client.get(f"{API}/jobs/{job['id']}/export.xlsx", params={"layout": layout})
+        assert res.status_code == 200, res.text
+        ws = load_workbook(io.BytesIO(res.content)).worksheets[0]
+        cells = [c for row in ws.iter_rows(min_row=2) for c in row if c.value is not None]
+        assert not [c.coordinate for c in cells if c.data_type == "f"]
+        # Both the record's own text and the candidate's copy of it.
+        assert sum(1 for c in cells if c.value == lines[0]) >= 3
+        assert any(c.value == "bell text" for c in cells)  # control characters dropped
+
+
 # ---- uploads -----------------------------------------------------------------
 
 
