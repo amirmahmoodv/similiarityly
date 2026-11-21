@@ -15,6 +15,7 @@ import type {
   Preview,
   RecordPage,
   RecordStatus,
+  RepairResult,
   Repo,
   RepoConfig,
   SearchHit,
@@ -169,6 +170,7 @@ export const api = {
   deleteChunk: (recordId: string, chunkId: string) =>
     request<void>(`/records/${recordId}/chunks/${chunkId}`, { method: "DELETE" }),
   reindex: (id: string) => request<Job>(`/repos/${id}/reindex`, { method: "POST" }),
+  repair: (id: string) => request<RepairResult>(`/repos/${id}/repair`, { method: "POST" }),
 
   sources: (repoId: string) => request<Source[]>(`/repos/${repoId}/sources`),
   deleteSource: (id: string) => request<void>(`/sources/${id}`, { method: "DELETE" }),

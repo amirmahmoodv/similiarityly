@@ -44,7 +44,7 @@ import httpcore
 import httpx
 from httpcore._backends.sync import SyncStream
 from httpcore._exceptions import map_exceptions
-from qdrant_client.http.exceptions import ResponseHandlingException
+from qdrant_client.http.exceptions import ResponseHandlingException, UnexpectedResponse
 
 log = logging.getLogger("similarityly")
 
@@ -268,17 +268,41 @@ def batched(
 # ---- error codes ---------------------------------------------------------------
 
 
+class StorageIntegrityError(RuntimeError):
+    """Qdrant acknowledged a write, but the points cannot be read back."""
+
+
+# What Qdrant says when stored bytes no longer decode, e.g. "Failed to decode
+# value: Failed to decompress LZ4 value" after a crash cut a write short.
+_CORRUPT = re.compile(r"decompress|failed to decode|corrupt|checksum", re.IGNORECASE)
+
+
 def storage_error_code(exc: BaseException) -> str | None:
-    """The stable code ("storage_timeout" / "storage_unreachable") when a Qdrant request failed in
-    transit (after the retry above), else None. qdrant-client wraps every
-    transport error in ResponseHandlingException, which tells a Qdrant failure
-    apart from one in, say, the embedding service's HTTP client."""
+    """The stable code when Qdrant, not the app, failed a request; else None.
+
+    * "storage_timeout" / "storage_unreachable": the request failed in transit
+      (after the retry above). qdrant-client wraps every transport error in
+      ResponseHandlingException, which tells a Qdrant failure apart from one
+      in, say, the embedding service's HTTP client.
+    * "storage_corrupt": Qdrant answered 5xx because stored data cannot be
+      decoded, or a write could not be read back.
+    * "storage_error": any other 5xx from Qdrant.
+    """
     chain: list[BaseException] = []
     seen: BaseException | None = exc
     while seen is not None and len(chain) < 20:
         chain.append(seen)
         # ResponseHandlingException keeps the transport error as `source`.
         seen = getattr(seen, "source", None) or seen.__cause__ or seen.__context__
+    for e in chain:
+        if isinstance(e, StorageIntegrityError):
+            return "storage_corrupt"
+        if isinstance(e, UnexpectedResponse) and e.status_code >= 500:
+            content = e.content
+            text = (
+                content.decode("utf-8", "replace") if isinstance(content, bytes) else str(content)
+            )
+            return "storage_corrupt" if _CORRUPT.search(text) else "storage_error"
     if not any(isinstance(e, ResponseHandlingException) for e in chain):
         return None
     if any(isinstance(e, (httpx.TimeoutException, TimeoutError)) for e in chain):

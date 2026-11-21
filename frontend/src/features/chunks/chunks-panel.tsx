@@ -12,6 +12,7 @@ import {
   Search,
   SearchX,
   Trash2,
+  TriangleAlert,
   X,
 } from "lucide-react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
@@ -477,6 +478,16 @@ export function ChunksPanel({ repo }: { repo: Repo }) {
   const [search, setSearch] = React.useState("");
   const [query, setQuery] = React.useState("");
   const searchInput = React.useRef<HTMLInputElement>(null);
+  const queryClient = useQueryClient();
+  const [confirmRepair, setConfirmRepair] = React.useState(false);
+  const repair = useMutation({
+    mutationFn: () => api.repair(repo.id),
+    onSuccess: () => {
+      setConfirmRepair(false);
+      // Counts, sources, results and this listing all changed.
+      return queryClient.invalidateQueries();
+    },
+  });
 
   React.useEffect(() => {
     const next = search.trim();
@@ -623,6 +634,36 @@ export function ChunksPanel({ repo }: { repo: Repo }) {
         </p>
       )}
 
+      {data.unreadable > 0 && (
+        <div
+          role="alert"
+          className="flex flex-wrap items-center gap-3 rounded-xl border border-sim/50 bg-sim-soft px-4 py-3 text-sm"
+        >
+          <TriangleAlert className="size-4 shrink-0 text-sim" aria-hidden="true" />
+          <span className="min-w-48 flex-1">{t.chunks.unreadable(n(data.unreadable))}</span>
+          <Button
+            size="sm"
+            variant="danger"
+            onClick={() => {
+              repair.reset();
+              setConfirmRepair(true);
+            }}
+          >
+            <Trash2 className="size-4" aria-hidden="true" />
+            {t.chunks.repair}
+          </Button>
+        </div>
+      )}
+
+      {repair.data && repair.data.records_removed > 0 && (
+        <p
+          role="status"
+          className="rounded-lg border border-primary/25 bg-accent px-3 py-2 text-sm"
+        >
+          {t.chunks.repaired(n(repair.data.records_removed))}
+        </p>
+      )}
+
       {data.total === 0 && !searching ? (
         <EmptyState
           icon={<SearchX className="size-6" aria-hidden="true" />}
@@ -674,6 +715,17 @@ export function ChunksPanel({ repo }: { repo: Repo }) {
           </Button>
         </nav>
       )}
+
+      <ConfirmDialog
+        open={confirmRepair}
+        onOpenChange={setConfirmRepair}
+        title={t.chunks.repairTitle}
+        body={t.chunks.repairBody}
+        confirmLabel={t.chunks.repair}
+        pending={repair.isPending}
+        error={repair.error}
+        onConfirm={() => repair.mutate()}
+      />
     </div>
   );
 }

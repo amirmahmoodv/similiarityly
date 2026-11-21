@@ -310,6 +310,13 @@ export const en: Dictionary = {
     noMatchesBody: "Try a different phrase, or set the source to “All sources”.",
     truncated: (limit) =>
       `Too many results; only the first ${limit} matching chunks were scanned. Use a more specific phrase.`,
+    unreadable: (count) =>
+      `${count} records on this page are left out: the database (Qdrant) can no longer read their stored data, usually after it was stopped in the middle of a write.`,
+    repair: "Remove damaged records",
+    repairTitle: "Remove damaged records",
+    repairBody:
+      "Every record of this repository is checked. Those the database cannot read are removed together with their chunks and matches; their text is already lost. Records that read fine are not touched. Load the affected files again afterwards.",
+    repaired: (count) => `${count} damaged records were removed. Load the affected files again.`,
     textLabel: "Chunk text",
     editLabel: (index) => `Edit chunk ${index}`,
     deleteLabel: (index) => `Delete chunk ${index}`,
@@ -430,6 +437,10 @@ export const en: Dictionary = {
     internal_error: "The server hit an unexpected error; details are in the API log.",
     storage_timeout:
       "The database (Qdrant) did not answer in time, even after a retry on a new connection. Nothing was saved; try again.",
+    storage_corrupt:
+      "The database (Qdrant) cannot read some of its stored data; it was probably stopped in the middle of a write. Open the repository's Chunks tab to remove the damaged records, or restore a Qdrant snapshot.",
+    storage_error:
+      "The database (Qdrant) reported an internal error. Check the Qdrant log, then try again.",
     storage_unreachable:
       "The connection to the database (Qdrant) failed, even after a retry. Nothing was saved; try again.",
     validation_error: "The values entered are not valid.",

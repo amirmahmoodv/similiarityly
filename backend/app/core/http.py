@@ -24,10 +24,10 @@ class CatchErrorsMiddleware:
     it and only sees a network error. Answering here keeps the CORS headers and
     gives the UI a stable error code; the traceback goes to the log.
 
-    A Qdrant request that failed in transit (timeout, dropped connection) is
-    not a bug in the app: it answers 503 with `storage_timeout` or
-    `storage_unreachable`, so the UI can say "try again" instead of
-    "unexpected error".
+    A Qdrant request that failed in transit (timeout, dropped connection) or
+    that Qdrant itself answered with a 5xx is not a bug in the app: it answers
+    503 with a `storage_*` code (see `storage_error_code`), so the UI can say
+    what is wrong with the storage instead of "unexpected error".
     """
 
     def __init__(self, app: ASGIApp):

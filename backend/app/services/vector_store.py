@@ -364,6 +364,22 @@ class VectorStore:
                     wait=True,
                 )
 
+    def delete_records(self, repo_id: str, record_ids: list[str]) -> None:
+        """Remove every chunk of these records."""
+        name = self._name(repo_id)
+        with self._lock:
+            if not record_ids or not self._client.collection_exists(name):
+                return
+            for i in range(0, len(record_ids), 256):
+                match = qm.MatchAny(any=record_ids[i : i + 256])
+                self._client.delete(
+                    name,
+                    points_selector=qm.FilterSelector(
+                        filter=qm.Filter(must=[qm.FieldCondition(key="record_id", match=match)])
+                    ),
+                    wait=True,
+                )
+
     def delete_source(self, repo_id: str, source_id: str) -> None:
         name = self._name(repo_id)
         with self._lock:

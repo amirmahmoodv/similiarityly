@@ -1,3 +1,6 @@
+import logging
+import uuid
+
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.core.state import Services, get_services
@@ -5,6 +8,7 @@ from app.models import Job, Match, Record, Repo, Source
 from app.schemas import (
     IndexStatus,
     JobOut,
+    RepairOut,
     RepoConfig,
     RepoCreate,
     RepoOut,
@@ -12,6 +16,8 @@ from app.schemas import (
     SourceOut,
 )
 from app.services.pipeline import delete_source_data, run_reindex
+
+log = logging.getLogger("similarityly")
 
 router = APIRouter(tags=["repos"])
 
@@ -103,6 +109,43 @@ def reindex_repo(repo_id: str, services: Services = Depends(get_services)):
     services.meta.put(job)
     services.submit(run_reindex, job.id)
     return job_out(services.meta.get(Job, job.id), services)
+
+
+@router.post("/repos/{repo_id}/repair", response_model=RepairOut)
+def repair_repo(repo_id: str, services: Services = Depends(get_services)):
+    """Remove what Qdrant can no longer decode, so the rest is usable again.
+
+    A crash or a full disk on the Qdrant side can leave stored payloads
+    damaged: every read touching one then fails. Their text is gone, so the
+    damaged records are removed with their chunks and matches; the sources'
+    record counts are brought back in line. Load the affected files again
+    afterwards. Entries that read fine are never touched.
+    """
+    repo = get_repo(repo_id, services)
+    meta = services.meta
+    records = meta.unreadable(Record, {"repo_id": repo.id})
+    matches = meta.unreadable(Match, {"repo_id": repo.id})
+    if records:
+        # Point ids come back as dashed UUIDs; entities refer to each other by hex.
+        hex_ids = [uuid.UUID(i).hex for i in records]
+        services.store.delete_records(repo.id, hex_ids)
+        for i in range(0, len(hex_ids), 256):
+            meta.delete(Match, {"record_id": hex_ids[i : i + 256]})
+        meta.delete_ids(Record, records)
+        for source in meta.all(Source, {"repo_id": repo.id}):
+            left = meta.count(Record, {"source_id": source.id})
+            if left != source.record_count:
+                meta.patch(Source, source.id, record_count=left)
+    if matches:
+        meta.delete_ids(Match, matches)
+    if records or matches:
+        log.warning(
+            "repair of repo %s removed %d unreadable records and %d unreadable matches",
+            repo.id,
+            len(records),
+            len(matches),
+        )
+    return RepairOut(records_removed=len(records), matches_removed=len(matches))
 
 
 @router.get("/repos/{repo_id}/index", response_model=IndexStatus)

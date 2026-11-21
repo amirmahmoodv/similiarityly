@@ -53,6 +53,7 @@ def browse_chunks(
     # Walk the sources to the one holding the page's first record.
     skip = (page - 1) * page_size
     records: list[Record] = []
+    unreadable: list[str] = []  # damaged in Qdrant: left out, and reported
     for s in sources:
         if len(records) >= page_size:
             break
@@ -66,6 +67,7 @@ def browse_chunks(
                 order_by="ordinal",
                 limit=page_size - len(records),
                 offset=skip,
+                skipped=unreadable,
             )
         )
         skip = 0
@@ -86,7 +88,9 @@ def browse_chunks(
         )
         for r in records
     ]
-    return ChunkPage(items=items, total=total, page=page, page_size=page_size)
+    return ChunkPage(
+        items=items, total=total, page=page, page_size=page_size, unreadable=len(unreadable)
+    )
 
 
 def _search_chunks(

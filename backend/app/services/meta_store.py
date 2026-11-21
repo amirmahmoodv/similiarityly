@@ -16,7 +16,7 @@ from qdrant_client import models as qm
 from qdrant_client.http.exceptions import UnexpectedResponse
 
 from app.models import ENTITIES, Entity
-from app.services.qdrant_http import batched
+from app.services.qdrant_http import StorageIntegrityError, batched, storage_error_code
 
 log = logging.getLogger("similarityly")
 
@@ -29,6 +29,10 @@ _SCHEMA = {
     "bool": qm.PayloadSchemaType.BOOL,
 }
 _BATCH = 256
+
+# Reads one small field: Qdrant still has to decode the whole stored payload,
+# so a damaged one fails, but almost nothing travels back.
+_ID_ONLY = qm.PayloadSelectorInclude(include=["id"])
 
 Where = dict[str, Any]
 Ranges = dict[str, dict[str, float]]
@@ -48,6 +52,10 @@ def build_filter(where: Where | None = None, ranges: Ranges | None = None) -> qm
 
 def _payload_bytes(point: qm.PointStruct) -> int:
     return len(json.dumps(point.payload, ensure_ascii=False).encode()) + 64
+
+
+def _corrupt(exc: Exception) -> bool:
+    return storage_error_code(exc) == "storage_corrupt"
 
 
 class MetaStore:
@@ -95,6 +103,19 @@ class MetaStore:
         for batch in batched(points, _payload_bytes, _BATCH):
             with self._lock:
                 self._client.upsert(name, points=batch, wait=True)
+            self._verify(name, [p.id for p in batch])
+
+    def _verify(self, name: str, ids: list[str]) -> None:
+        """Read back what was just written, so a write Qdrant acknowledged but
+        cannot decode fails here, at the load, not on a later page view."""
+        if not self._server:
+            return
+        with self._lock:
+            found = self._client.retrieve(name, ids=ids, with_payload=_ID_ONLY, with_vectors=False)
+        if len(found) != len(ids):
+            raise StorageIntegrityError(
+                f"{name}: wrote {len(ids)} points, only {len(found)} can be read back"
+            )
 
     def patch(self, entity: type[E], id: str, **fields: Any) -> None:
         with self._lock:
@@ -109,10 +130,16 @@ class MetaStore:
             )
 
     def delete_id(self, entity: type[Entity], id: str) -> None:
-        with self._lock:
-            self._client.delete(
-                self._name(entity), points_selector=qm.PointIdsList(points=[id]), wait=True
-            )
+        self.delete_ids(entity, [id])
+
+    def delete_ids(self, entity: type[Entity], ids: list[str]) -> None:
+        for i in range(0, len(ids), _BATCH):
+            with self._lock:
+                self._client.delete(
+                    self._name(entity),
+                    points_selector=qm.PointIdsList(points=ids[i : i + _BATCH]),
+                    wait=True,
+                )
 
     # ---- reads -------------------------------------------------------------
 
@@ -152,19 +179,83 @@ class MetaStore:
         desc: bool = False,
         limit: int = 50,
         offset: int = 0,
+        skipped: list[str] | None = None,
     ) -> list[E]:
-        """One ordered page. `order_by` must be listed in the entity's INDEXES."""
+        """One ordered page. `order_by` must be listed in the entity's INDEXES.
+
+        With `skipped`, points whose stored payload Qdrant cannot decode are
+        left out and their point ids appended to it, so one damaged record
+        does not take the whole page down. Without it, the error is raised.
+        """
+        name = self._name(entity)
         direction = qm.Direction.DESC if desc else qm.Direction.ASC
+        page: dict[str, Any] = {
+            "query": qm.OrderByQuery(order_by=qm.OrderBy(key=order_by, direction=direction)),
+            "query_filter": build_filter(where, ranges),
+            "limit": limit,
+            "offset": offset,
+        }
+        try:
+            with self._lock:
+                res = self._client.query_points(name, with_payload=True, **page)
+            return [entity.model_validate(p.payload) for p in res.points]
+        except UnexpectedResponse as exc:
+            if skipped is None or not _corrupt(exc):
+                raise
+        # The page's ids come from the indexes alone; then payload by payload.
         with self._lock:
-            res = self._client.query_points(
-                self._name(entity),
-                query=qm.OrderByQuery(order_by=qm.OrderBy(key=order_by, direction=direction)),
-                query_filter=build_filter(where, ranges),
-                limit=limit,
-                offset=offset,
-                with_payload=True,
-            )
-        return [entity.model_validate(p.payload) for p in res.points]
+            res = self._client.query_points(name, with_payload=False, **page)
+        points, bad = self._read(name, [p.id for p in res.points], True)
+        if bad:
+            log.error("%s: %d points cannot be decoded by Qdrant: %s", name, len(bad), bad)
+            skipped.extend(bad)
+        return [entity.model_validate(p.payload) for p in points]
+
+    def _read(self, name: str, ids: list, payload: Any) -> tuple[list, list[str]]:
+        """Points of `ids`, in that order, and the ids Qdrant cannot decode.
+
+        A failed batch is halved until the damaged points stand alone. Only a
+        decode failure counts as damaged; any other error is raised, so an
+        outage is never mistaken for lost data.
+        """
+        if not ids:
+            return [], []
+        try:
+            with self._lock:
+                points = self._client.retrieve(
+                    name, ids=ids, with_payload=payload, with_vectors=False
+                )
+        except UnexpectedResponse as exc:
+            if not _corrupt(exc):
+                raise
+            if len(ids) == 1:
+                return [], [str(ids[0])]
+            mid = len(ids) // 2
+            left, bad_left = self._read(name, ids[:mid], payload)
+            right, bad_right = self._read(name, ids[mid:], payload)
+            return left + right, bad_left + bad_right
+        by_id = {str(p.id): p for p in points}
+        return [by_id[str(i)] for i in ids if str(i) in by_id], []
+
+    def unreadable(self, entity: type[Entity], where: Where | None = None) -> list[str]:
+        """Point ids of every match whose stored payload Qdrant cannot decode."""
+        name = self._name(entity)
+        flt = build_filter(where)
+        bad: list[str] = []
+        offset = None
+        while True:
+            with self._lock:
+                points, offset = self._client.scroll(
+                    name,
+                    scroll_filter=flt,
+                    limit=_BATCH,
+                    offset=offset,
+                    with_payload=False,
+                    with_vectors=False,
+                )
+            bad.extend(self._read(name, [p.id for p in points], _ID_ONLY)[1])
+            if offset is None:
+                return bad
 
     def all(self, entity: type[E], where: Where | None = None) -> list[E]:
         """Every match, unordered (callers sort). Scrolls in pages."""

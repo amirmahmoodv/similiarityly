@@ -226,7 +226,12 @@ export type ChunkPage = {
   page_size: number;
   /** A search matched more chunks than the server scans. */
   truncated: boolean;
+  /** Records of this page left out: the database cannot read their stored data. */
+  unreadable: number;
 };
+
+/** What a repair removed: entries whose stored data could not be read. */
+export type RepairResult = { records_removed: number; matches_removed: number };
 
 export type IndexStatus = {
   searchable: boolean;

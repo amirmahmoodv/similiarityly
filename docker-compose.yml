@@ -6,6 +6,9 @@ services:
     # in backend/uv.lock. Dependabot proposes updates.
     image: qdrant/qdrant:v1.20.2@sha256:d277592721d2e3b73f9b797b53cf05e6a5bb2134f6d13fdbda4ca51782afbcac
     restart: unless-stopped
+    # Time to flush to disk on `docker compose stop/down`. The default 10 s can
+    # kill Qdrant mid-write, which is how stored payloads get damaged.
+    stop_grace_period: 2m
     security_opt:
       - no-new-privileges:true
     volumes:

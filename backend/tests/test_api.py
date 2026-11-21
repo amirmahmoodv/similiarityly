@@ -392,6 +392,7 @@ def test_browse_chunks(client):
         "page": 1,
         "page_size": 20,
         "truncated": False,
+        "unreadable": 0,
     }
     assert client.get(url, params={"q": "   "}).json()["total"] == 4  # blank: no search
     assert client.get(url, params={"q": "x" * 201}).status_code == 422

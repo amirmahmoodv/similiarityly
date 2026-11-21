@@ -294,6 +294,16 @@ class ChunkPage(BaseModel):
     page: int
     page_size: int
     truncated: bool = False  # a search matched more chunks than were scanned
+    # Records of this page left out because Qdrant cannot decode their stored
+    # data; `POST /repos/{id}/repair` removes them.
+    unreadable: int = 0
+
+
+class RepairOut(BaseModel):
+    """What a repair removed: entries whose stored data could not be read."""
+
+    records_removed: int = 0
+    matches_removed: int = 0
 
 
 class IndexStatus(BaseModel):

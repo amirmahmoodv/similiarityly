@@ -101,6 +101,37 @@ Only process-level settings stay in the environment — see
 The old connection variables (`SIM_QDRANT_URL`, `SIM_QDRANT_API_KEY`,
 `SIM_OPENAI_*`, `SIM_LLM_*`) are **ignored**; set those values in Settings.
 
+## Protecting stored data
+
+Everything lives in Qdrant, including the full text of every loaded record.
+If Qdrant is killed in the middle of a write, or its disk fills up, stored
+payloads can be left damaged: reads then fail with
+`Failed to decode value: Failed to decompress LZ4 value`. The app cannot
+prevent that from the outside; the Qdrant deployment has to:
+
+- **Let Qdrant shut down cleanly.** Compose gives it two minutes
+  (`stop_grace_period`). On Kubernetes set `terminationGracePeriodSeconds`
+  to 60 or more and never force-delete the pod.
+- **Give it enough memory and disk.** An out-of-memory kill during a large
+  load is the usual cause. Set a memory limit with headroom and alert on the
+  volume filling up.
+- **Use block storage** (a local disk or a cloud block volume), not NFS or
+  another network file system. Qdrant requires a POSIX file system.
+- **Take snapshots** (`POST /collections/{name}/snapshots` on Qdrant) of at
+  least `sim_meta_records` on a schedule. A snapshot is the only way to get
+  damaged text back.
+
+What the app does when it happens anyway:
+
+- Each batch written to a Qdrant server is read back at once, so a write that
+  cannot be decoded fails the load instead of surfacing days later.
+- The API answers `503` with the code `storage_corrupt` (other Qdrant 5xx
+  answers: `storage_error`) instead of an unexplained `500`.
+- The **Chunks** tab leaves damaged records out, says how many, and offers
+  **Remove damaged records** (`POST /api/v1/repos/{id}/repair`). That checks
+  every record of the repository and removes only those Qdrant cannot decode,
+  with their chunks and matches. Load the affected files again afterwards.
+
 ## Security
 
 Similarityly has **no user accounts**. Protect it with one of:
