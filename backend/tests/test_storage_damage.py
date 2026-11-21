@@ -192,8 +192,11 @@ def test_a_write_that_cannot_be_read_back_fails_the_load(client, monkeypatch):
     )
     assert res.status_code == 503, res.text
     assert res.json()["detail"]["code"] == "storage_corrupt"
-    # The half-stored load is removed again.
+    # The source is removed again. Its undecodable records cannot be deleted
+    # point by point; they stay, out of sight, until a repair.
     assert services.meta.all(Source, {"repo_id": repo["id"]}) == []
+    assert services.meta.count(Record, {"repo_id": repo["id"]}) == len(LINES)
+    assert client.post(f"{API}/repos/{repo['id']}/repair").json()["records_removed"] == len(LINES)
     assert services.meta.count(Record, {"repo_id": repo["id"]}) == 0
 
 
@@ -203,3 +206,101 @@ def test_points_missing_after_a_write_are_an_integrity_error(client, monkeypatch
     monkeypatch.setattr(services.client, "retrieve", lambda *a, **k: [])
     with pytest.raises(StorageIntegrityError):
         services.meta.put(Source(repo_id="r", name="s", kind="list"))
+
+
+def refuse_point_deletes(client, monkeypatch):
+    """Qdrant decodes a point's payload to delete it, so deleting a damaged
+    point fails, and the collection then refuses every write."""
+    qdrant = client.app.state.services.client
+    real_delete = qdrant.delete
+    calls = []
+
+    def delete(collection, **kw):
+        if collection == RECORDS:
+            calls.append(kw)
+            body = (
+                b'{"status":{"error":"Service internal error: Not recovered from previous error"}}'
+            )
+            raise UnexpectedResponse(500, "Internal Server Error", body, None)
+        return real_delete(collection, **kw)
+
+    monkeypatch.setattr(qdrant, "delete", delete)
+    return calls
+
+
+def test_repair_never_deletes_points_from_the_damaged_collection(client, monkeypatch):
+    """Seen in production: the delete failed and left the collection read-only."""
+    repo, job, ids = loaded_repo(client)
+    other = client.post(f"{API}/repos", json={"name": "other", "config": {}}).json()
+    client.post(
+        f"{API}/repos/{other['id']}/ingest",
+        data={"input_kind": "text", "split": "lines", "text": "یک سطر سالم در مخزن دیگر"},
+    )
+    damage(client, monkeypatch, [ids[0], ids[2]])
+    deletes = refuse_point_deletes(client, monkeypatch)
+
+    res = client.post(f"{API}/repos/{repo['id']}/repair")
+    assert res.status_code == 200, res.text
+    assert res.json() == {"records_removed": 2, "matches_removed": 0}
+    assert deletes == []
+
+    services = client.app.state.services
+    items = client.get(f"{API}/jobs/{job['id']}/records").json()["items"]
+    assert [i["id"] for i in items] == [ids[1]]
+    # Records of other repositories share the collection and survive the rebuild.
+    assert services.meta.count(Record, {"repo_id": other["id"]}) == 1
+    assert not services.client.collection_exists(RECORDS + "_rebuild")
+    # The rebuilt collection takes writes again.
+    again = client.post(
+        f"{API}/repos/{repo['id']}/ingest",
+        data={"input_kind": "text", "split": "lines", "text": "سطر تازه پس از تعمیر مخزن"},
+    )
+    assert again.json()["status"] == "done"
+
+
+def test_deleting_a_source_with_damaged_records_is_refused(client, monkeypatch):
+    repo, _, ids = loaded_repo(client)
+    services = client.app.state.services
+    (source,) = services.meta.all(Source, {"repo_id": repo["id"]})
+    monkeypatch.setattr(services.meta, "_server", True)
+    damage(client, monkeypatch, [ids[1]])
+    deletes = refuse_point_deletes(client, monkeypatch)
+
+    res = client.delete(f"{API}/sources/{source.id}")
+    assert res.status_code == 503, res.text
+    assert res.json()["detail"]["code"] == "storage_corrupt"
+    assert deletes == []
+
+
+def _restart(client):
+    """A new MetaStore on the same Qdrant, as after an API restart."""
+    from app.services.meta_store import MetaStore
+
+    services = client.app.state.services
+    return MetaStore(services.client, services.meta._lock, "sim_", "memory")
+
+
+def test_interrupted_rebuild_is_finished_on_the_next_start(client):
+    """The process died after the damaged collection was dropped."""
+    repo, _, ids = loaded_repo(client)
+    services = client.app.state.services
+    side = RECORDS + "_rebuild"
+    services.client.create_collection(side, vectors_config={})
+    assert services.meta._copy(RECORDS, side) == (len(ids), [])
+    services.client.delete_collection(RECORDS)
+
+    meta = _restart(client)
+    assert sorted(r.id for r in meta.all(Record, {"repo_id": repo["id"]})) == sorted(ids)
+    assert not services.client.collection_exists(side)
+
+
+def test_a_leftover_side_copy_never_replaces_the_intact_original(client):
+    """The process died while still copying out: the original is complete."""
+    repo, _, ids = loaded_repo(client)
+    services = client.app.state.services
+    side = RECORDS + "_rebuild"
+    services.client.create_collection(side, vectors_config={})
+
+    meta = _restart(client)
+    assert meta.count(Record, {"repo_id": repo["id"]}) == len(ids)
+    assert not services.client.collection_exists(side)

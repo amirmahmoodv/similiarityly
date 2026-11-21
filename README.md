@@ -128,9 +128,16 @@ What the app does when it happens anyway:
 - The API answers `503` with the code `storage_corrupt` (other Qdrant 5xx
   answers: `storage_error`) instead of an unexplained `500`.
 - The **Chunks** tab leaves damaged records out, says how many, and offers
-  **Remove damaged records** (`POST /api/v1/repos/{id}/repair`). That checks
-  every record of the repository and removes only those Qdrant cannot decode,
-  with their chunks and matches. Load the affected files again afterwards.
+  **Remove damaged records** (`POST /api/v1/repos/{id}/repair`). Qdrant
+  cannot delete a point it cannot decode: the delete fails and the collection
+  then refuses every write (`Not recovered from previous error`). So the
+  repair copies every record that still decodes to a side collection
+  (`sim_meta_records_rebuild`), drops and recreates the damaged collection,
+  and moves the copy back, for all repositories at once. The lost records'
+  chunks and matches are removed too. An interrupted repair is finished at
+  the next API start. Load the affected files again afterwards.
+- Deleting a source or repository that holds damaged records is refused with
+  `storage_corrupt` until it has been repaired, for the same reason.
 
 ## Security
 

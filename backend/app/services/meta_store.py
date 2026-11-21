@@ -29,6 +29,9 @@ _SCHEMA = {
     "bool": qm.PayloadSchemaType.BOOL,
 }
 _BATCH = 256
+# Records can hold whole documents; a rebuild moves them a few at a time.
+_COPY_PAGE = 32
+_REBUILD_SUFFIX = "_rebuild"
 
 # Reads one small field: Qdrant still has to decode the whole stored payload,
 # so a damaged one fails, but almost nothing travels back.
@@ -66,6 +69,7 @@ class MetaStore:
         self._server = mode == "server"
         for entity in ENTITIES:
             self._ensure(entity)
+            self._finish_rebuild(entity)
 
     def _name(self, entity: type[Entity]) -> str:
         return self._prefix + entity.KIND
@@ -122,6 +126,7 @@ class MetaStore:
             self._client.set_payload(self._name(entity), payload=fields, points=[id], wait=True)
 
     def delete(self, entity: type[Entity], where: Where) -> None:
+        self._refuse_damaged(entity, where)
         with self._lock:
             self._client.delete(
                 self._name(entity),
@@ -140,6 +145,100 @@ class MetaStore:
                     points_selector=qm.PointIdsList(points=ids[i : i + _BATCH]),
                     wait=True,
                 )
+
+    # ---- damaged data --------------------------------------------------------
+
+    def _refuse_damaged(self, entity: type[Entity], where: Where) -> None:
+        """Stop a delete that would touch a point Qdrant cannot decode.
+
+        Qdrant reads a point's old payload to delete it. When that fails, the
+        delete fails, and the collection then refuses every later write with
+        "Not recovered from previous error". Only `rebuild` gets rid of such
+        points safely.
+        """
+        if not self._server:
+            return
+        bad = self.unreadable(entity, where)
+        if bad:
+            raise StorageIntegrityError(
+                f"{self._name(entity)}: {len(bad)} points cannot be decoded by Qdrant; "
+                "repair the repository before deleting them"
+            )
+
+    def rebuild(self, entity: type[Entity]) -> list[str]:
+        """Recreate the collection from the points that still decode.
+
+        Returns the point ids left behind. Damaged points cannot be deleted
+        (see `_refuse_damaged`), so the readable ones are copied to a side
+        collection, the damaged collection is dropped and created again, and
+        the copy is moved back. Dropping a collection decodes nothing, and it
+        also clears a collection that already refuses writes.
+
+        The lock is held throughout, so nothing else writes in between. If
+        the process dies halfway, the next start finishes the move back.
+        """
+        name = self._name(entity)
+        side = name + _REBUILD_SUFFIX
+        with self._lock:
+            self._finish_rebuild(entity)  # a leftover from an interrupted run
+            self._client.create_collection(side, vectors_config={})
+            copied, bad = self._copy(name, side)
+            kept = self._client.count(side, exact=True).count
+            if kept != copied:
+                # The original is untouched; the next run starts over.
+                raise StorageIntegrityError(
+                    f"{side}: copied {copied} points, {kept} are stored; nothing was removed"
+                )
+            log.warning("%s: rebuilding without %d undecodable points: %s", name, len(bad), bad)
+            self._move_back(entity)
+        return bad
+
+    def _finish_rebuild(self, entity: type[Entity]) -> None:
+        """Deal with the side collection an interrupted rebuild left behind."""
+        name = self._name(entity)
+        side = name + _REBUILD_SUFFIX
+        with self._lock:
+            if not self._client.collection_exists(side):
+                return
+            kept = self._client.count(side, exact=True).count
+            # The side copy never holds more than the original it was read
+            # from. Fewer points in the collection therefore means the original
+            # is already gone and the move back did not finish.
+            if self._client.count(name, exact=True).count < kept:
+                log.warning("%s: finishing an interrupted rebuild (%d points)", name, kept)
+                self._move_back(entity)
+            else:
+                self._client.delete_collection(side)
+
+    def _move_back(self, entity: type[Entity]) -> None:
+        name = self._name(entity)
+        side = name + _REBUILD_SUFFIX
+        self._client.delete_collection(name)
+        self._ensure(entity)
+        copied, bad = self._copy(side, name)
+        if bad or self._client.count(name, exact=True).count != copied:
+            # The side collection still holds everything; it is kept.
+            raise StorageIntegrityError(f"{name}: the rebuilt collection is incomplete")
+        self._client.delete_collection(side)
+
+    def _copy(self, src: str, dst: str) -> tuple[int, list[str]]:
+        """Copy every decodable point; returns (copied, ids that do not decode)."""
+        copied = 0
+        bad: list[str] = []
+        offset = None
+        while True:
+            points, offset = self._client.scroll(
+                src, limit=_COPY_PAGE, offset=offset, with_payload=False, with_vectors=False
+            )
+            good, damaged = self._read(src, [p.id for p in points], True)
+            bad.extend(damaged)
+            structs = [qm.PointStruct(id=p.id, vector={}, payload=p.payload or {}) for p in good]
+            for batch in batched(structs, _payload_bytes, _BATCH):
+                self._client.upsert(dst, points=batch, wait=True)
+                self._verify(dst, [p.id for p in batch])
+            copied += len(good)
+            if offset is None:
+                return copied, bad
 
     # ---- reads -------------------------------------------------------------
 

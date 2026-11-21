@@ -168,12 +168,19 @@ def _start_load(services: Services, source: Source, rows: list[Record], job: Job
         meta.put_many(rows)
         meta.put(job)
     except Exception:
-        try:
-            meta.delete(Record, {"source_id": source.id})
-            meta.delete_id(Job, job.id)
-            meta.delete_id(Source, source.id)
-        except Exception:
-            log.warning("could not remove the partial load of source %s", source.id, exc_info=True)
+        # Each step on its own: records Qdrant stored but cannot decode cannot
+        # be deleted (a repair removes them), and the source must still go.
+        for undo in (
+            lambda: meta.delete(Record, {"source_id": source.id}),
+            lambda: meta.delete_id(Job, job.id),
+            lambda: meta.delete_id(Source, source.id),
+        ):
+            try:
+                undo()
+            except Exception:
+                log.warning(
+                    "could not remove the partial load of source %s", source.id, exc_info=True
+                )
         raise
     services.submit(run_ingest, job.id)
     return job_out(meta.get(Job, job.id) or job, services)

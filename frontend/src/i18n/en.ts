@@ -315,7 +315,7 @@ export const en: Dictionary = {
     repair: "Remove damaged records",
     repairTitle: "Remove damaged records",
     repairBody:
-      "Every record of this repository is checked. Those the database cannot read are removed together with their chunks and matches; their text is already lost. Records that read fine are not touched. Load the affected files again afterwards.",
+      "Every stored record is checked, in all repositories. Those the database cannot read are removed together with their chunks and matches; their text is already lost. Records that read fine are kept. This can take a while and other actions wait until it finishes. Load the affected files again afterwards.",
     repaired: (count) => `${count} damaged records were removed. Load the affected files again.`,
     textLabel: "Chunk text",
     editLabel: (index) => `Edit chunk ${index}`,
