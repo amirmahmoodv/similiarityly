@@ -356,20 +356,34 @@ class MetaStore:
             if offset is None:
                 return bad
 
-    def all(self, entity: type[E], where: Where | None = None) -> list[E]:
-        """Every match, unordered (callers sort). Scrolls in pages."""
+    def all(
+        self, entity: type[E], where: Where | None = None, skipped: list[str] | None = None
+    ) -> list[E]:
+        """Every match, unordered (callers sort). Scrolls in pages.
+
+        With `skipped`, points Qdrant cannot decode are left out and their ids
+        appended to it, as in `find`. Without it, the error is raised.
+        """
+        name = self._name(entity)
         out: list[E] = []
         offset = None
         flt = build_filter(where)
         while True:
-            with self._lock:
-                points, offset = self._client.scroll(
-                    self._name(entity),
-                    scroll_filter=flt,
-                    limit=_BATCH,
-                    offset=offset,
-                    with_payload=True,
-                )
+            page: dict[str, Any] = {"scroll_filter": flt, "limit": _BATCH, "offset": offset}
+            try:
+                with self._lock:
+                    points, offset = self._client.scroll(name, with_payload=True, **page)
+            except UnexpectedResponse as exc:
+                if skipped is None or not _corrupt(exc):
+                    raise
+                # The same page by id only, then payload by payload.
+                with self._lock:
+                    ids, offset = self._client.scroll(
+                        name, with_payload=False, with_vectors=False, **page
+                    )
+                points, bad = self._read(name, [p.id for p in ids], True)
+                log.error("%s: %d points cannot be decoded by Qdrant: %s", name, len(bad), bad)
+                skipped.extend(bad)
             out.extend(entity.model_validate(p.payload) for p in points)
             if offset is None:
                 return out

@@ -213,8 +213,11 @@ def export_job_xlsx(
     job = _job(job_id, services)
     similar, duplicate = _thresholds(job, services)
     where = {"source_id": job.source_id}
-    records = services.meta.all(Record, where) if job.source_id else []
-    matches = services.meta.all(Match, where) if job.source_id else []
+    # A report of what can be read beats no report: entries Qdrant cannot
+    # decode are left out and counted on the Summary sheet (a repair removes them).
+    unreadable: list[str] = []
+    records = services.meta.all(Record, where, unreadable) if job.source_id else []
+    matches = services.meta.all(Match, where, unreadable) if job.source_id else []
 
     counts = {"duplicate": 0, "similar": 0, "unique": 0}
     for r in records:
@@ -236,6 +239,7 @@ def export_job_xlsx(
             similar=similar,
             duplicate=duplicate,
             counts=counts,
+            unreadable=len(unreadable),
         ),
         names,
         layout=layout,

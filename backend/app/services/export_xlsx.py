@@ -64,6 +64,7 @@ _TEXT = {
         "total": "Records checked",
         "exported": "Records in this file",
         "per_record": "Candidates per record (up to)",
+        "unreadable": "Damaged entries left out (repair the repository)",
     },
     "fa": {
         "results": "نتایج",
@@ -94,6 +95,7 @@ _TEXT = {
         "total": "رکوردهای بررسی‌شده",
         "exported": "رکوردهای این فایل",
         "per_record": "نامزد برای هر رکورد (حداکثر)",
+        "unreadable": "ورودی‌های آسیب‌دیدهٔ کنارگذاشته (مخزن را تعمیر کنید)",
     },
 }
 
@@ -116,6 +118,8 @@ class ExportInfo:
     similar: float
     duplicate: float
     counts: dict[str, int]  # status -> records, over the whole check
+    # Records and matches Qdrant could not decode; they are not in the file.
+    unreadable: int = 0
 
 
 def status_of(score: float, similar: float, duplicate: float) -> str:
@@ -282,6 +286,7 @@ def build_workbook(
         ("unique", info.counts.get("unique", 0), False),
         ("exported", len(records), False),
         ("per_record", limit, False),
+        *([("unreadable", info.unreadable, False)] if info.unreadable else []),
     ]:
         summary.append([t[key], value], frozenset({2}) if pct else frozenset())
     summary.ws.sheet_view.rightToLeft = rtl

@@ -95,24 +95,27 @@ async function send(path: string, init?: RequestInit): Promise<Response> {
   return res;
 }
 
+/** The error a failed response stands for. */
+async function toApiError(res: Response): Promise<ApiError> {
+  let code = "unknown_error";
+  let detail = "";
+  try {
+    const body = await res.json();
+    if (typeof body.detail === "string") code = body.detail;
+    else if (typeof body.detail?.code === "string") {
+      // {code, message}: a translatable code plus the server's raw message.
+      code = body.detail.code;
+      detail = typeof body.detail.message === "string" ? body.detail.message : "";
+    } else if (res.status === 422) code = "validation_error";
+  } catch {
+    /* non-JSON error body */
+  }
+  return new ApiError(res.status, code, detail);
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await send(path, init);
-  if (!res.ok) {
-    let code = "unknown_error";
-    let detail = "";
-    try {
-      const body = await res.json();
-      if (typeof body.detail === "string") code = body.detail;
-      else if (typeof body.detail?.code === "string") {
-        // {code, message}: a translatable code plus the server's raw message.
-        code = body.detail.code;
-        detail = typeof body.detail.message === "string" ? body.detail.message : "";
-      } else if (res.status === 422) code = "validation_error";
-    } catch {
-      /* non-JSON error body */
-    }
-    throw new ApiError(res.status, code, detail);
-  }
+  if (!res.ok) throw await toApiError(res);
   return res.status === 204 ? (undefined as T) : res.json();
 }
 
@@ -156,9 +159,15 @@ export type XlsxExportOptions = {
 async function download(path: string, filename: string): Promise<void> {
   const res = await send(path);
   if (!res.ok) {
-    const code =
-      res.status === 401 ? "unauthorized" : res.status === 422 ? "validation_error" : "unknown_error";
-    throw new ApiError(res.status, code);
+    const error = await toApiError(res);
+    // FastAPI answers an unknown route with the bare text "Not Found": the API
+    // is an older build than this UI and has no such export yet.
+    if (error.code === "Not Found") {
+      throw new ApiError(res.status, "export_unsupported", `HTTP ${res.status} ${path}`);
+    }
+    // Keep the status visible when the body gave no usable code (a proxy's 502/504).
+    if (error.code === "unknown_error" && !error.detail) error.detail = `HTTP ${res.status}`;
+    throw error;
   }
   const url = URL.createObjectURL(await res.blob());
   const a = document.createElement("a");

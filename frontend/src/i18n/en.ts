@@ -471,6 +471,8 @@ export const en: Dictionary = {
     repo_needs_reindex: "Reindex the repository first.",
     source_not_found: "Source not found.",
     job_not_found: "Job not found.",
+    export_unsupported:
+      "The server does not have this export; the API is an older build than the UI. Update the API.",
     record_not_found: "Record not found.",
     record_not_indexed: "This record was only checked, not added to the index.",
     chunk_not_found: "Chunk not found; it may already have been deleted.",

@@ -113,6 +113,24 @@ def test_chunk_browser_leaves_damaged_records_out_and_says_so(client, monkeypatc
     assert page["unreadable"] == 1
 
 
+def test_xlsx_export_leaves_damaged_entries_out_and_says_so(client, monkeypatch):
+    import io
+
+    from openpyxl import load_workbook
+
+    _, job, ids = loaded_repo(client)
+    url = f"{API}/jobs/{job['id']}/export.xlsx"
+    healthy = load_workbook(io.BytesIO(client.get(url).content))
+    assert healthy.worksheets[1].max_row == 10  # no "left out" line
+
+    damage(client, monkeypatch, [ids[1]])
+    res = client.get(url)
+    assert res.status_code == 200, res.text
+    results, summary = load_workbook(io.BytesIO(res.content)).worksheets
+    assert [row[0].value for row in results.iter_rows(min_row=2)] == [1, 3]
+    assert summary["A11"].value.startswith("Damaged entries") and summary["B11"].value == 1
+
+
 def test_healthy_page_reports_nothing_unreadable(client):
     repo, _, ids = loaded_repo(client)
     page = client.get(f"{API}/repos/{repo['id']}/chunks").json()

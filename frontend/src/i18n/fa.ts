@@ -472,6 +472,8 @@ export const fa = {
     repo_needs_reindex: "ابتدا نمایهٔ مخزن را بازسازی کنید.",
     source_not_found: "منبع پیدا نشد.",
     job_not_found: "پردازش پیدا نشد.",
+    export_unsupported:
+      "سرور این نوع خروجی را ندارد؛ نسخهٔ API قدیمی‌تر از رابط کاربری است. API را به‌روز کنید.",
     record_not_found: "رکورد پیدا نشد.",
     record_not_indexed: "این رکورد فقط بررسی شده و به نمایه افزوده نشده است.",
     chunk_not_found: "قطعه پیدا نشد؛ شاید پیش‌تر حذف شده باشد.",
